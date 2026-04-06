@@ -1,0 +1,11 @@
+.env
+.venv
+
+uv.lock
+__pycache__
+
+.redis
+.postgres
+
+auth-private-key.pem
+auth-private-key-base64.txt
