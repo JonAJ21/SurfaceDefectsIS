@@ -2,9 +2,12 @@ import json
 from typing import Annotated, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile as UF, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Header, Query, UploadFile as UF, status
 from pydantic import Field, WithJsonSchema
 
+from domain.exceptions.base import DomainException
+from application.dtos.user import UserAuthRequestDTO
+from application.usecases.user.auth import BaseUserAuthUseCase
 from application.usecases.defects.delete import BaseDefectDeleteUseCase, DefectDeleteUseCase
 from application.usecases.defects.update import BaseDefectUpdateUseCase
 from application.usecases.defects.moderate import BaseDefectModerateUseCase, DefectModerateUseCase
@@ -15,7 +18,7 @@ from application.dtos.defect import DefectCreateRequestDTO, DefectCreateResponse
 from application.usecases.defects.create import BaseDefectCreateUseCase
 from domain.values.defect_types import DefectStatus, DefectType, GeometryType, SeverityLevel
 from presentation.api.v1.schemas.defect import DefectResponse, ErrorResponse
-
+from presentation.api.v1.security.security import security_scheme
 
 UploadFile = Annotated[UF, WithJsonSchema({"type": "string", "format": "binary"})]
 
@@ -40,12 +43,38 @@ async def create_defect(
     max_distance_meters: int = Form(15),
     photos: List[UploadFile] = File(..., description="At least one photo required"),
     create_usecase: BaseDefectCreateUseCase = Depends(),
-    user_id: str = "LDKSL:"
+    auth_usecase: BaseUserAuthUseCase = Depends(),
+    credentials: str = Depends(security_scheme),
 ):
     """
     Создание нового дефекта с фотографиями.
     Поддерживает точечные и линейные дефекты.
     """
+    access_token = credentials.credentials
+    # Проверяем доступ пользователя
+    auth_request_dto = UserAuthRequestDTO(
+        access_token=access_token,
+        # needed_permission_codes=['defects.create']
+    )
+    try:
+        auth_result = await auth_usecase.execute(auth_request_dto)
+    except DomainException as e:
+        raise HTTPException(
+            status_code=401,
+            detail=e.message
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+    if auth_result.is_verified == False:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authorized"
+        )
+    user_id = auth_result.user_oid
+    
     # Парсим координаты из JSON строки
     try:
         coords = json.loads(coordinates)
@@ -166,12 +195,40 @@ async def get_pending_defects(
     limit: int = Query(100, ge=1, le=500, description="Количество записей"),
     offset: int = Query(0, ge=0, description="Смещение для пагинации"),
     get_usecase: BaseDefectGetPendingUseCase = Depends(),
-    moderator_id: str = "dakdla"
+    auth_usecase: BaseUserAuthUseCase = Depends(),
+    credentials: str = Depends(security_scheme),
 ):
     """
     Получение дефектов на модерацию.
     Только для модераторов.
     """
+    
+    access_token = credentials.credentials
+    # Проверяем доступ пользователя
+    auth_request_dto = UserAuthRequestDTO(
+        access_token=access_token,
+        # needed_permission_codes=['defects.create']
+    )
+    try:
+        auth_result = await auth_usecase.execute(auth_request_dto)
+    except DomainException as e:
+        raise HTTPException(
+            status_code=401,
+            detail=e.message
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+    if auth_result.is_verified == False:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authorized"
+        )
+    moderator_id = auth_result.user_oid
+    
+    
     request_dto = DefectGetPendingRequestDTO(limit=limit, offset=offset)
     
     return await get_usecase.execute(request_dto)
@@ -187,7 +244,8 @@ async def moderate_defect(
     status: DefectStatus = Form(...),
     rejection_reason: Optional[str] = Form(None),
     moderate_usecase: BaseDefectModerateUseCase = Depends(),
-    moderator_id: str = "KDLS"
+    auth_usecase: BaseUserAuthUseCase = Depends(),
+    credentials: str = Depends(security_scheme),
 ):
     """
     Модерация дефекта.
@@ -196,6 +254,31 @@ async def moderate_defect(
     - **status**: Новый статус (approved, rejected)
     - **rejection_reason**: Причина отклонения (обязательно для rejected)
     """
+    access_token = credentials.credentials
+    # Проверяем доступ пользователя
+    auth_request_dto = UserAuthRequestDTO(
+        access_token=access_token,
+        # needed_permission_codes=['defects.create']
+    )
+    try:
+        auth_result = await auth_usecase.execute(auth_request_dto)
+    except DomainException as e:
+        raise HTTPException(
+            status_code=401,
+            detail=e.message
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+    if auth_result.is_verified == False:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authorized"
+        )
+    moderator_id = auth_result.user_oid
+    
     if status == DefectStatus.REJECTED and not rejection_reason:
         raise HTTPException(
             status_code=400,
@@ -227,9 +310,35 @@ async def update_defect(
     severity: Optional[SeverityLevel] = None,
     description: Optional[str] = None,
     update_usecase: BaseDefectUpdateUseCase = Depends(),
-    user_id: str = "jdkls"
+    auth_usecase: BaseUserAuthUseCase = Depends(),
+    credentials: str = Depends(security_scheme),
 ):
     """Обновление дефекта (только для создателя)"""
+    access_token = credentials.credentials
+    # Проверяем доступ пользователя
+    auth_request_dto = UserAuthRequestDTO(
+        access_token=access_token,
+        # needed_permission_codes=['defects.create']
+    )
+    try:
+        auth_result = await auth_usecase.execute(auth_request_dto)
+    except DomainException as e:
+        raise HTTPException(
+            status_code=401,
+            detail=e.message
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+    if auth_result.is_verified == False:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authorized"
+        )
+    user_id = auth_result.user_oid
+    
     request_dto = DefectUpdateRequestDTO(
         defect_id=defect_id,
         defect_type=defect_type,
@@ -248,16 +357,42 @@ async def update_defect(
     
     
 @router.delete(
-    "/{defect_id}",
+    "/defects/{defect_id}",
     response_model=DefectDeleteResponseDTO,
     responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}}
 )
 async def delete_defect(
     defect_id: UUID,
     delete_usecase: BaseDefectDeleteUseCase = Depends(),
-    user_id: str = "jkdla"
+    auth_usecase: BaseUserAuthUseCase = Depends(),
+    credentials: str = Depends(security_scheme),
 ):
     """Удаление дефекта (только для создателя)"""
+    access_token = credentials.credentials
+    # Проверяем доступ пользователя
+    auth_request_dto = UserAuthRequestDTO(
+        access_token=access_token,
+        # needed_permission_codes=['defects.create']
+    )
+    try:
+        auth_result = await auth_usecase.execute(auth_request_dto)
+    except DomainException as e:
+        raise HTTPException(
+            status_code=401,
+            detail=e.message
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+    if auth_result.is_verified == False:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authorized"
+        )
+    user_id = auth_result.user_oid
+    
     request_dto = DefectDeleteRequestDTO(
         defect_id=defect_id,
         deleted_by=user_id

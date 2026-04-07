@@ -172,5 +172,53 @@ class Settings(BaseSettings):
         env="DUPLICATE_DISTANCE_TOLERANCE_METERS",
         alias="duplicate_distance_tolerance_meters",
     )
+    
+    jwt_secret_key: str = Field(
+        "secret",
+        env="JWT_SECRET_KEY",
+        alias="jwt_secret_key",
+    )
+    
+    jwt_algorithm: str = Field(
+        "RS256",
+        env="JWT_ALGORITHM",
+        alias="jwt_algorithm",
+    )
+    
+    jwt_private_key_base64: str = Field(
+        "",
+        env="JWT_PRIVATE_KEY_BASE64",
+        alias="jwt_private_key_base64",
+    )
+    
+    jwt_public_key_base64: str = Field(
+        "",
+        env="JWT_PUBLIC_KEY_BASE64",
+        alias="jwt_public_key_base64",
+    )
+    
+    @property
+    def jwt_private_key(self) -> str:
+        if not self.jwt_private_key_base64:
+            raise ValueError("JWT_PRIVATE_KEY_BASE64 is not set")
+        return base64.b64decode(self.jwt_private_key_base64).decode("utf-8")
+    
+    @property
+    def jwt_public_key(self) -> str:
+        if not self.jwt_public_key_base64:
+            raise ValueError("JWT_PUBLIC_KEY_BASE64 is not set")
+        return base64.b64decode(self.jwt_public_key_base64).decode("utf-8")
+    
+    access_token_expire_minutes: int = Field(
+        30,
+        env="JWT_ACCESS_TOKEN_EXPIRE_MINUTES",
+        alias="jwt_access_token_expire_minutes",
+    )
+    
+    refresh_token_expire_days: int = Field(
+        7,
+        env="JWT_REFRESH_TOKEN_EXPIRE_DAYS",
+        alias="jwt_refresh_token_expire_days",
+    )
 
 settings = Settings()

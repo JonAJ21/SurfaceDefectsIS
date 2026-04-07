@@ -3,6 +3,9 @@ from functools import cache
 
 from fastapi import Depends
 
+from domain.services.token import BaseTokenService
+from infrastructure.services.token import JSONWebTokenService
+from application.usecases.user.auth import BaseUserAuthUseCase, UserAuthUseCase
 from application.usecases.road.snap_point import BaseSnapPointUseCase, SnapPointUseCase
 from application.usecases.road.snap_linestring import BaseSnapLinestringUseCase, SnapLinestringUseCase
 from application.usecases.defects.delete import BaseDefectDeleteUseCase, DefectDeleteUseCase
@@ -21,6 +24,10 @@ from infrastructure.database.session import async_session_maker
 
 def uow_factory() -> BaseUnitOfWork:
     return SQLAlchemyUnitOfWork(session_factory=async_session_maker)
+
+@cache 
+def token_service_factory() -> BaseTokenService:
+    return JSONWebTokenService()
 
 def get_road_snapping_service(uow: BaseUnitOfWork) -> BaseRoadSnappingService:
     return OSMRoadSnappingService(uow)
@@ -87,3 +94,10 @@ async def get_snap_point_use_case(
     uow: BaseUnitOfWork = Depends(uow_factory)
 ) -> BaseSnapPointUseCase:
     return SnapPointUseCase(uow)
+
+@add_factory_to_mapper(BaseUserAuthUseCase)
+@cache
+def user_auth_usecase_factory(
+    jwt_service: BaseTokenService = Depends(token_service_factory)
+) -> BaseUserAuthUseCase:
+    return UserAuthUseCase(jwt_service)
