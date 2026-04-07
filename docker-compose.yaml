@@ -1,4 +1,5 @@
 services:
+  # Auth 
   auth-postgres:
     container_name: auth-postgres
     image: postgres:17.2
@@ -9,7 +10,7 @@ services:
     ports:
       - "${POSTGRES_PORT}:5432"
     volumes:
-      - .postgres:/var/lib/postgresql/data
+      - .auth-postgres:/var/lib/postgresql/data
     restart: unless-stopped
     networks:
       - backend
@@ -23,7 +24,7 @@ services:
     ports:
       - "${REDIS_PORT}:6379"
     volumes:
-      - .redis:/data
+      - .auth-redis:/data
     restart: unless-stopped
     networks:
       - backend
@@ -46,6 +47,85 @@ services:
       - auth-redis
     networks:
       - backend
+
+  # Defects
+  defects-postgres:
+    image: postgis/postgis:15-3.4
+    container_name: defects-postgres
+    environment:
+      POSTGRES_DB: "${DEFECTS_POSTGRES_NAME}"
+      POSTGRES_USER: "${DEFECTS_POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${DEFECTS_POSTGRES_PASSWORD}"
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --lc-collate=C --lc-ctype=C
+    ports:
+      - "${DEFECTS_POSTGRES_PORT}:5432"
+    volumes:
+      - .defects-postgres:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DEFECTS_POSTGRES_USER} - d ${DEFECTS_POSTGRES_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - backend
+  
+
+
+  defects-redis:
+    image: redis:alpine3.21
+    container_name: defects-redis
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    command: /bin/sh -c "redis-server --requirepass $$REDIS_PASSWORD"
+    ports:
+      - "${DEFECTS_REDIS_PORT}:6379"
+    volumes:
+      - .defects-redis:/data
+    restart: unless-stopped
+    networks:
+      - backend
+
+  defects-minio:
+    image: minio/minio:latest
+    container_name: defects-minio
+    ports:
+      - "${DEFECTS_MINIO_API_PORT}:9000"
+      - "${DEFECTS_MINIO_CONSOLE_PORT}:9001"
+    environment:
+      MINIO_ROOT_USER: "${DEFECTS_MINIO_ROOT_USER}"
+      MINIO_ROOT_PASSWORD: "${DEFECTS_MINIO_ROOT_PASSWORD}"
+    volumes:
+      - .defects-minio:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - backend
+
+  defects-service:
+    container_name: defects-service
+    build: 
+      context: ./DefectService
+      dockerfile: Dockerfile
+    command: "uvicorn --factory main:create_app --host=0.0.0.0 --reload --port 8000"
+    volumes:
+      - ./DefectService/app:/app
+    ports:
+      - "${DEFECTS_SERVICE_PORT}:8000"
+    env_file:
+      - ".env"
+    restart: unless-stopped
+    depends_on:
+      - auth-service
+    networks:
+      - backend
+
+    
 
 networks:
   backend:

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-PATTERNS=(".postgres" ".redis" "__pycache__")
+PATTERNS=(".postgres" ".redis" ".auth-postgres" ".auth-redis" ".defects-minio" ".defects-postgres" ".defects-redis" "__pycache__")
 DRY_RUN=false
 
 # Парсим аргументы

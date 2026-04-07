@@ -5,6 +5,7 @@ ENV = --env-file .env
 
 DOCKER_COMPOSE_FILE = docker-compose.yaml
 AUTH_CONTAINER = auth-service
+DEFECT_CONTAINER = defects-service
 
 .PHONY: app
 app:
@@ -37,3 +38,24 @@ auth-alembic-upgrade:
 .PHONY: auth-init
 auth-init:
 	${EXEC} ${AUTH_CONTAINER} python cli.py
+
+
+.PHONY: defects-alembic-revision
+defects-alembic-revision:
+	${EXEC} ${DEFECT_CONTAINER} alembic -c ./infrastructure/alembic.ini revision --autogenerate -m "update"
+
+.PHONY: defects-alembic-upgrade
+defects-alembic-upgrade:
+	${EXEC} ${DEFECT_CONTAINER} alembic -c ./infrastructure/alembic.ini upgrade head
+
+.PHONY: defects-download-osm-small
+defects-download-osm-small:
+	${EXEC} ${DEFECT_CONTAINER} python cli.py download-osm small /app/osm
+
+.PHONY: defects-download-osm-moscow-oblast
+defects-download-osm-moscow-oblast:
+	${EXEC} ${DEFECT_CONTAINER} python cli.py download-osm moscow_oblast /app/osm
+
+.PHONY: defects-import-osm
+defects-import-osm:
+	${EXEC} ${DEFECT_CONTAINER} python cli.py import-osm
