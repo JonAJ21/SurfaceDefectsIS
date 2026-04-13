@@ -58,4 +58,4 @@ defects-download-osm-moscow-oblast:
 
 .PHONY: defects-import-osm
 defects-import-osm:
-	${EXEC} ${DEFECT_CONTAINER} python cli.py import-osm
+	${EXEC} ${DEFECT_CONTAINER} python cli.py import-osm-to-postgis

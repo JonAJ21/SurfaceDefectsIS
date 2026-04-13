@@ -2,9 +2,11 @@ import json
 from typing import Annotated, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Header, Query, UploadFile as UF, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Header, Path, Query, UploadFile as UF, status
 from pydantic import Field, WithJsonSchema
 
+from application.usecases.defects.get_by_user_id import BaseDefectGetByUserIdUseCase
+from application.usecases.defects.get_in_vieport import BaseDefectGetInViewPortUseCase
 from domain.exceptions.base import DomainException
 from application.dtos.user import UserAuthRequestDTO
 from application.usecases.user.auth import BaseUserAuthUseCase
@@ -14,7 +16,7 @@ from application.usecases.defects.moderate import BaseDefectModerateUseCase, Def
 from application.usecases.defects.get_pending import BaseDefectGetPendingUseCase
 from application.usecases.defects.get_nearby import BaseDefectGetNearbyUseCase
 from application.usecases.defects.get import BaseDefectGetUseCase, DefectGetUseCase
-from application.dtos.defect import DefectCreateRequestDTO, DefectCreateResponseDTO, DefectDeleteRequestDTO, DefectDeleteResponseDTO, DefectGetNearbyRequestDTO, DefectGetNearbyResponseDTO, DefectGetPendingRequestDTO, DefectGetPendingResponseDTO, DefectGetRequestDTO, DefectGetResponseDTO, DefectModerateRequestDTO, DefectModerateResponseDTO, DefectUpdateRequestDTO, DefectUpdateResponseDTO, PhotoUploadDTO
+from application.dtos.defect import DefectCreateRequestDTO, DefectCreateResponseDTO, DefectDeleteRequestDTO, DefectDeleteResponseDTO, DefectGetByUserIdRequestDTO, DefectGetByUserIdResponseDTO, DefectGetInViewPortRequestDTO, DefectGetInViewPortResponseDTO, DefectGetNearbyRequestDTO, DefectGetNearbyResponseDTO, DefectGetPendingRequestDTO, DefectGetPendingResponseDTO, DefectGetRequestDTO, DefectGetResponseDTO, DefectModerateRequestDTO, DefectModerateResponseDTO, DefectUpdateRequestDTO, DefectUpdateResponseDTO, PhotoUploadDTO
 from application.usecases.defects.create import BaseDefectCreateUseCase
 from domain.values.defect_types import DefectStatus, DefectType, GeometryType, SeverityLevel
 from presentation.api.v1.schemas.defect import DefectResponse, ErrorResponse
@@ -162,6 +164,29 @@ async def get_defect(
         raise HTTPException(status_code=404, detail=str(e))
     
 @router.get(
+    "/users/{user_id}/defects",
+    response_model=list[DefectGetByUserIdResponseDTO],
+    responses={404: {"model": ErrorResponse}}
+)
+async def get_defects_by_user_id(
+    user_id: str = Path(...),
+    limit: int = Query(100, ge=1, description="Количество дефектов"),
+    offset: int = Query(0, ge=0, description="Смещение для пагинации"),
+    get_usecase: BaseDefectGetByUserIdUseCase = Depends()
+):
+    """Получение дефекта по ID"""
+    request_dto = DefectGetByUserIdRequestDTO(
+        user_id=user_id,
+        limit=limit,
+        offset=offset
+    )  
+    try:
+        result = await get_usecase.execute(request_dto)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    
+@router.get(
     "/defects/nearby/",
     response_model=List[DefectGetNearbyResponseDTO]
 )
@@ -186,6 +211,37 @@ async def get_defects_nearby(
     )
     
     return await get_usecase.execute(request_dto)
+
+@router.get(
+    "/defects/viewport/",
+    response_model=List[DefectGetInViewPortResponseDTO]
+)
+async def get_defects_in_viewport(
+    min_longitude: float = Query(..., ge=-180, le=180, description="Долгота"),
+    min_latitude: float = Query(..., ge=-90, le=90, description="Широта"),
+    max_longitude: float = Query(..., ge=-180, le=180, description="Долгота"),
+    max_latitude: float = Query(..., ge=-90, le=90, description="Широта"),
+    defect_types: Optional[List[DefectType]] = Query(None, description="Фильтр по типам дефектов"),
+    min_severity: Optional[SeverityLevel] = Query(None, description="Минимальный уровень опасности"),
+    limit: int = Query(100, ge=1, description="Количество дефектов"),
+    get_usecase: BaseDefectGetInViewPortUseCase = Depends()
+):
+    """
+    Получение дефектов внутри прямоугольника (viewport/bounding box).
+    Возвращает только подтверждённые дефекты.
+    """
+    request_dto = DefectGetInViewPortRequestDTO(
+        min_lon=min_longitude,
+        min_lat=min_latitude,
+        max_lon=max_longitude,
+        max_lat=max_latitude,
+        defect_types=defect_types,
+        min_severity=min_severity,
+        limit=limit
+    )
+    
+    return await get_usecase.execute(request_dto)
+
 
 @router.get(
     "/defects/pending/",

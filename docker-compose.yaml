@@ -48,7 +48,7 @@ services:
     networks:
       - backend
 
-  # Defects
+  #Defects
   defects-postgres:
     image: postgis/postgis:15-3.4
     container_name: defects-postgres
@@ -71,8 +71,6 @@ services:
     networks:
       - backend
   
-
-
   defects-redis:
     image: redis:alpine3.21
     container_name: defects-redis
@@ -107,6 +105,18 @@ services:
     networks:
       - backend
 
+  tilemaker:
+    image: ghcr.io/systemed/tilemaker:master
+    container_name: tilemaker-generator
+    volumes:
+      - ./TileMaker:/data    
+    environment:
+      - TILEMAKER_THREADS=4
+    networks:
+      - backend
+    profiles:
+      - generate
+
   defects-service:
     container_name: defects-service
     build: 
@@ -115,6 +125,7 @@ services:
     command: "uvicorn --factory main:create_app --host=0.0.0.0 --reload --port 8000"
     volumes:
       - ./DefectService/app:/app
+      - ./TileMaker/osmpbf:/app/osm
     ports:
       - "${DEFECTS_SERVICE_PORT}:8000"
     env_file:
@@ -122,8 +133,14 @@ services:
     restart: unless-stopped
     depends_on:
       - auth-service
+      - defects-minio
+      # - tilemaker
+      - defects-postgres
+      - defects-redis
     networks:
       - backend
+
+  
 
     
 

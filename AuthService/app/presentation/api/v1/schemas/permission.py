@@ -60,4 +60,4 @@ class PermissionUpdateResponseSchema(BaseModel):
         )
 
 class PermissionDeleteResponseSchema(BaseModel):
-    message: str
+    message: str = "Permission deleted"

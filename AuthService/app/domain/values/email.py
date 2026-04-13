@@ -1,6 +1,8 @@
 import re
 from dataclasses import dataclass
 
+from domain.exceptions.email import InvalidEmailFormat
+
 @dataclass(frozen=True)
 class Email:
     value: str
@@ -8,7 +10,7 @@ class Email:
     def __post_init__(self):
         pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
         if not re.match(pattern, self.value):
-            raise ValueError(f"Invalid email format: {self.value}")
+            raise InvalidEmailFormat(self.value)
         object.__setattr__(self, 'value', self.value.lower())
     
     def __str__(self):

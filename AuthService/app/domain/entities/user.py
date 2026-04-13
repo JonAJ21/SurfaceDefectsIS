@@ -3,8 +3,7 @@ from datetime import datetime
 from typing import Optional
 
 from domain.entities.session import Session
-from domain.exceptions.auth import InvalidPasswordOrEmailException
-from domain.exceptions.user import UserInactiveException
+from domain.exceptions.auth import NewPasswordIsRequiredException, OldPasswordIsRequiredException
 from domain.services.password import BasePasswordService
 from domain.entities.login_history import LoginHistory
 from domain.entities.role import Role
@@ -137,9 +136,9 @@ class User(BaseEntity):
     
     def change_password(self, old_password: str, new_password: str, password_service: BasePasswordService) -> None:
         if not old_password:
-            raise ValueError("Old password is required")
+            raise OldPasswordIsRequiredException()
         if not new_password:
-            raise ValueError("New password is required")
+            raise NewPasswordIsRequiredException("New password is required")
         if self.password.verify(old_password, password_service):
             self.password = Password.from_plain(new_password, password_service)
             self.updated_at = datetime.now()

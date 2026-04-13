@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
+from domain.exceptions.permission import PermissionCodeMustBeAtLeast3CharactersException, PermissionCodeMustBeInFormatResourceActionException, PermissionCodeMustContainDotException, PermissionCodeMustHaveNonEmptyResourceAndActionException
 from domain.entities.base import BaseEntity
 
 @dataclass
@@ -13,14 +14,14 @@ class Permission(BaseEntity):
 
     def _validate_code(self) -> None:
         if not self.code or len(self.code) < 3:
-            raise ValueError("Permission code must be at least 3 characters")
+            raise PermissionCodeMustBeAtLeast3CharactersException()
         if "." not in self.code:
-            raise ValueError("Permission code must contain a dot (e.g., 'users.read')")
+            raise PermissionCodeMustContainDotException()
         parts = self.code.split(".")
         if len(parts) != 2:
-            raise ValueError("Permission code must be in format 'resource.action'")
+            raise PermissionCodeMustBeInFormatResourceActionException()
         if not parts[0] or not parts[1]:
-            raise ValueError("Permission code must have non-empty resource and action")
+            raise PermissionCodeMustHaveNonEmptyResourceAndActionException()
 
     def __hash__(self) -> int:
         return hash(self.code)

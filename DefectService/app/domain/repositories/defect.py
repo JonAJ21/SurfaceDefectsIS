@@ -21,6 +21,11 @@ class BaseDefectsRepository(ABC):
         ...
     
     @abstractmethod
+    async def get_by_user_id(self, user_id: str) -> List[RoadDefect]:
+        """Получить по ID пользователя"""
+        ...
+    
+    @abstractmethod
     async def find_nearby(
         self,
         center: Coordinate,
@@ -31,6 +36,20 @@ class BaseDefectsRepository(ABC):
         """Найти дефекты рядом"""
         ...
     
+    @abstractmethod
+    async def find_in_viewport(
+        self,
+        min_lon: float,
+        min_lat: float,
+        max_lon: float,
+        max_lat: float,
+        defect_types: Optional[List[DefectType]] = None,
+        min_severity: Optional[SeverityLevel] = None,
+        limit: int = 1000,
+    ) -> List[RoadDefect]:
+        """Находит дефекты внутри прямоугольника (viewport/bounding box)."""
+        ...
+        
     @abstractmethod
     async def get_pending(self, offset: int = 0, limit: int = 10) -> List[RoadDefect]:
         """Получить дефекты на модерацию"""

@@ -31,6 +31,20 @@ class DefectGetNearbyRequestDTO(BaseModel):
     radius_meters: float = 100
     defect_types: Optional[List[DefectType]] = None
     min_severity: Optional[SeverityLevel] = None
+
+class DefectGetInViewPortRequestDTO(BaseModel):
+    min_lon: float
+    min_lat: float
+    max_lon: float
+    max_lat: float
+    defect_types: Optional[List[DefectType]] = None
+    min_severity: Optional[SeverityLevel] = None
+    limit: int = 1000
+    
+class DefectGetByUserIdRequestDTO(BaseModel):
+    user_id: str
+    limit: int = 100
+    offset: int = 0
     
 class DefectGetPendingRequestDTO(BaseModel):
     limit: int = 100
@@ -79,6 +93,9 @@ class DefectGetResponseDTO(DefectCreateResponseDTO):
     moderated_at: Optional[datetime]
     rejection_reason: Optional[str]
     
+class DefectGetByUserIdResponseDTO(DefectGetResponseDTO):
+    ...
+    
 class DefectGetNearbyResponseDTO(BaseModel):
     id: UUID
     defect_type: DefectType
@@ -88,16 +105,24 @@ class DefectGetNearbyResponseDTO(BaseModel):
     distance_meters: float
     photos: List[str]
     
+class DefectGetInViewPortResponseDTO(BaseModel):
+    id: UUID
+    defect_type: DefectType
+    severity: SeverityLevel
+    snapped_coordinates: List[List[float]]
+    road_name: Optional[str]
+    photos: List[str]
+    
 class DefectGetPendingResponseDTO(DefectGetResponseDTO):
-    pass
+    ...
 
 
 class DefectModerateResponseDTO(DefectGetResponseDTO):
-    pass
+    ...
 
 
 class DefectUpdateResponseDTO(DefectGetResponseDTO):
-    pass
+    ...
 
 
 class DefectDeleteResponseDTO(BaseModel):

@@ -3,6 +3,8 @@ from functools import cache
 
 from fastapi import Depends
 
+from application.usecases.defects.get_by_user_id import BaseDefectGetByUserIdUseCase, DefectGetByUserIdUseCase
+from application.usecases.defects.get_in_vieport import BaseDefectGetInViewPortUseCase, DefectGetInViewPortUseCase
 from domain.services.token import BaseTokenService
 from infrastructure.services.token import JSONWebTokenService
 from application.usecases.user.auth import BaseUserAuthUseCase, UserAuthUseCase
@@ -52,6 +54,20 @@ def defect_get_nearby_usecase_factory(
     uow: BaseUnitOfWork = Depends(uow_factory)
 ) -> BaseDefectGetNearbyUseCase:
     return DefectGetNearbyUseCase(uow)
+
+@add_factory_to_mapper(BaseDefectGetInViewPortUseCase)
+@cache
+def defect_get_in_viewport_usecase_factory(
+    uow: BaseUnitOfWork = Depends(uow_factory)
+) -> BaseDefectGetInViewPortUseCase:
+    return DefectGetInViewPortUseCase(uow)
+
+@add_factory_to_mapper(BaseDefectGetByUserIdUseCase)
+@cache
+def defect_get_by_user_id_usecase_factory(
+    uow: BaseUnitOfWork = Depends(uow_factory)
+) -> BaseDefectGetByUserIdUseCase:
+    return DefectGetByUserIdUseCase(uow)
 
 @add_factory_to_mapper(BaseDefectGetPendingUseCase)
 @cache

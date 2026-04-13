@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PMTiles Checker</title>
+    <style>
+        body { margin: 0; padding: 0; font-family: sans-serif; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+        .controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            max-width: 350px;
+        }
+        input, button {
+            width: 100%;
+            padding: 8px;
+            margin: 5px 0;
+            box-sizing: border-box;
+        }
+        button {
+            background: #007cbf;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .status {
+            margin-top: 10px;
+            padding: 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        .debug {
+            margin-top: 10px;
+            font-size: 11px;
+            font-family: monospace;
+            word-break: break-all;
+        }
+    </style>
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.1.0/dist/maplibre-gl.css" />
+    <script src="https://unpkg.com/maplibre-gl@5.1.0/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"></script>
+</head>
+<body>
+    <div class="controls">
+        <strong>🗺️ PMTiles Checker</strong>
+        <input type="text" id="tilesUrl" placeholder="http://localhost:9000/tiles/small.pmtiles" value="http://localhost:9000/tiles/small.pmtiles">
+        <button onclick="loadMap()">Загрузить</button>
+        <div id="status" class="status info">Введите URL и нажмите кнопку</div>
+        <div id="debug" class="debug"></div>
+    </div>
+    <div id="map"></div>
+
+    <script>
+        let map = null;
+        const protocol = new pmtiles.Protocol();
+        maplibregl.addProtocol('pmtiles', protocol.tile);
+        
+        async function loadMap() {
+            let url = document.getElementById('tilesUrl').value.trim();
+            const statusDiv = document.getElementById('status');
+            const debugDiv = document.getElementById('debug');
+            
+            if (!url) {
+                statusDiv.className = 'status error';
+                statusDiv.innerHTML = '❌ Введите URL';
+                return;
+            }
+            
+            statusDiv.className = 'status info';
+            statusDiv.innerHTML = '🔄 Проверка доступности...';
+            debugDiv.innerHTML = '';
+            
+            try {
+                // Шаг 1: Проверяем доступность файла
+                debugDiv.innerHTML += '📡 Проверка HTTP доступности...\n';
+                const response = await fetch(url, { method: 'HEAD' });
+                
+                debugDiv.innerHTML += `📡 HTTP статус: ${response.status}\n`;
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const contentType = response.headers.get('Content-Type');
+                const contentLength = response.headers.get('Content-Length');
+                debugDiv.innerHTML += `📦 Content-Type: ${contentType}\n`;
+                debugDiv.innerHTML += `📦 Размер: ${contentLength} байт\n`;
+                
+                statusDiv.innerHTML = '✅ Файл доступен! Загрузка карты...';
+                
+                // Шаг 2: Создаём карту
+                const pmtilesUrl = 'pmtiles://' + url;
+                const source = {
+                    type: 'vector',
+                    tiles: [`${pmtilesUrl}/{z}/{x}/{y}`],
+                    maxzoom: 14,
+                    minzoom: 5
+                };
+                
+                if (map) map.remove();
+                
+                map = new maplibregl.Map({
+                    container: 'map',
+                    style: {
+                        version: 8,
+                        sources: { 'source': source },
+                        layers: [
+                            {
+                                id: 'background',
+                                type: 'background',
+                                paint: { 'background-color': '#f2efe9' }
+                            }
+                        ]
+                    },
+                    center: [37.617, 55.755],
+                    zoom: 10
+                });
+                
+                map.addControl(new maplibregl.NavigationControl(), 'top-right');
+                
+                map.on('load', () => {
+                    statusDiv.className = 'status success';
+                    statusDiv.innerHTML = '✅ Карта загружена!';
+                    
+                    // Пробуем добавить стандартные слои
+                    const layers = ['water', 'transportation', 'building', 'park'];
+                    layers.forEach(layer => {
+                        if (map.getSource('source')) {
+                            try {
+                                map.addLayer({
+                                    id: layer,
+                                    type: layer === 'transportation' ? 'line' : 'fill',
+                                    source: 'source',
+                                    'source-layer': layer,
+                                    paint: layer === 'transportation' 
+                                        ? { 'line-color': '#888', 'line-width': 2 }
+                                        : layer === 'water'
+                                        ? { 'fill-color': '#4aa3df', 'fill-opacity': 0.8 }
+                                        : layer === 'building'
+                                        ? { 'fill-color': '#ddd', 'fill-opacity': 0.7 }
+                                        : { 'fill-color': '#8bc34a', 'fill-opacity': 0.6 }
+                                });
+                            } catch(e) {
+                                debugDiv.innerHTML += `⚠️ Слой ${layer} не найден: ${e.message}\n`;
+                            }
+                        }
+                    });
+                });
+                
+                map.on('error', (e) => {
+                    debugDiv.innerHTML += `❌ Map error: ${JSON.stringify(e)}\n`;
+                    statusDiv.innerHTML = `❌ Ошибка карты: ${e.error?.message || 'Check debug'}`;
+                });
+                
+                map.on('sourcedata', (e) => {
+                    if (e.sourceId === 'source' && e.tile) {
+                        debugDiv.innerHTML += `📦 Загружен тайл: ${e.tile}\n`;
+                    }
+                });
+                
+            } catch (error) {
+                console.error('Error:', error);
+                statusDiv.className = 'status error';
+                statusDiv.innerHTML = `❌ Ошибка: ${error.message}`;
+                debugDiv.innerHTML += `❌ ${error.message}\n`;
+                debugDiv.innerHTML += `\n💡 Решения:\n`;
+                debugDiv.innerHTML += `1. Убедитесь что порт правильный (API порт: 9000, а не 9001)\n`;
+                debugDiv.innerHTML += `2. Проверьте CORS: mc anonymous set download defects-minio/tiles\n`;
+                debugDiv.innerHTML += `3. Проверьте существование файла: mc ls defects-minio/tiles/\n`;
+            }
+        }
+    </script>
+</body>
+</html>

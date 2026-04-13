@@ -3,6 +3,7 @@ from uuid import uuid4
 
 from authx import AuthX, AuthXConfig, RequestToken
 
+from domain.exceptions.auth import AuthenticationException
 from domain.services.token import BaseTokenService
 from core.config.settings import settings
 
@@ -32,6 +33,7 @@ class JSONWebTokenService(BaseTokenService):
         is_verified: bool
     ) -> tuple[str, str]:
         oid = str(uuid4())
+        
         return oid, self.authx.create_access_token(
             uid=session_oid,
             scopes=permission_codes,
@@ -64,10 +66,13 @@ class JSONWebTokenService(BaseTokenService):
             type="access",
             location="headers"
         )
-        token_payload = self.authx.verify_token(
-            token=request_token,
-            verify_type=True
-        )
+        try:
+            token_payload = self.authx.verify_token(
+                token=request_token,
+                verify_type=True
+            )
+        except Exception:
+            raise AuthenticationException()
         
         return token_payload.model_dump()
     
@@ -77,10 +82,13 @@ class JSONWebTokenService(BaseTokenService):
             type="refresh",
             location="headers"
         )
-        token_payload = self.authx.verify_token(
-            token=request_token,
-            verify_type=True
-        )
+        try:
+            token_payload = self.authx.verify_token(
+                token=request_token,
+                verify_type=True
+            )
+        except Exception:
+            raise AuthenticationException()
         
         return token_payload.model_dump()
     

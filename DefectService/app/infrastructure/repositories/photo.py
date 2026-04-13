@@ -1,5 +1,6 @@
 
 import io
+import json
 from typing import Optional, Tuple
 import uuid
 
@@ -24,6 +25,18 @@ class MinioPhotosRepository(BasePhotosRepository):
         try:
             if not self.client.bucket_exists(settings.minio_bucket):
                 self.client.make_bucket(settings.minio_bucket)
+            policy = {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {"AWS": ["*"]},
+                        "Action": ["s3:GetObject"],
+                        "Resource": [f"arn:aws:s3:::{settings.minio_bucket}/*"]
+                    }
+                ]
+            }
+            self.client.set_bucket_policy(settings.minio_bucket, json.dumps(policy))
         except S3Error as e:
             print(f"MinIO bucket error: {e}")
     

@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Set, Optional
+from domain.exceptions.role import RoleNameIsEmptyException
 from domain.entities.base import BaseEntity
 from domain.entities.permission import Permission
 
@@ -15,7 +16,7 @@ class Role(BaseEntity):
     
     def _validate_name(self) -> None:
         if not self.name:
-            raise ValueError("Role name cannot be empty")
+            raise RoleNameIsEmptyException("Role name cannot be empty")
 
     def __post_init__(self):
         self._validate_name()

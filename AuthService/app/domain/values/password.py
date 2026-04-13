@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import re
 
+from domain.exceptions.password import PasswordMustBeAtLeast8CharactersLongException, PasswordMustContainDigitException, PasswordMustContainLowercaseLetterException, PasswordMustContainSpecialCharacterException, PasswordMustContainUppercaseLetterException, PasswordMustNotExceed64CharactersException
 from domain.services.password import BasePasswordService
 
 @dataclass(frozen=True)
@@ -16,19 +17,19 @@ class Password:
     @classmethod
     def _validate_length(cls, plain_password: str):
         if len(plain_password) < 8:
-            raise ValueError("Password must be at least 8 characters long")
+            raise PasswordMustBeAtLeast8CharactersLongException()
         if len(plain_password) > 64:
-            raise ValueError("Password must not exceed 64 characters")
+            raise PasswordMustNotExceed64CharactersException()
     @classmethod
     def _validate_complexity(cls, plain_password: str):
         if not re.search(r'[A-Z]', plain_password):
-            raise ValueError("Password must contain at least one uppercase letter")
+            raise PasswordMustContainUppercaseLetterException()
         if not re.search(r'[a-z]', plain_password):
-            raise ValueError("Password must contain at least one lowercase letter")
+            raise PasswordMustContainLowercaseLetterException()
         if not re.search(r'\d', plain_password):
-            raise ValueError("Password must contain at least one digit")
+            raise PasswordMustContainDigitException()
         if not re.search(r'[!@#$%^&*(),.?":{}|<>]', plain_password):
-            raise ValueError("Password must contain at least one special character")
+            raise PasswordMustContainSpecialCharacterException()
     
     def verify(self, plain_password: str, password_service: BasePasswordService) -> bool:
         return password_service.verify(plain_password, self.value)

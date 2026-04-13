@@ -1,9 +1,9 @@
 from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from geoalchemy2.functions import ST_DWithin, ST_SetSRID, ST_MakePoint
+from geoalchemy2.functions import ST_DWithin, ST_Intersects, ST_MakeEnvelope, ST_SetSRID, ST_MakePoint
 from geoalchemy2.shape import from_shape, to_shape
 from shapely.geometry import Point, LineString
 
@@ -96,6 +96,14 @@ class SQLAlchemyDefectsRepository(BaseDefectsRepository):
         model = result.scalar_one_or_none()
         return await self._to_entity(model) if model else None
     
+    
+    async def get_by_user_id(self, user_id: str) -> List[RoadDefect]:
+        """Получить по ID пользователя"""
+        stmt = select(RoadDefectModel).where(RoadDefectModel.created_by == user_id)
+        result = await self.session.execute(stmt)
+        models = result.scalars().all()
+        return [await self._to_entity(m) for m in models]
+    
     async def find_nearby(
         self,
         center: Coordinate,
@@ -122,6 +130,48 @@ class SQLAlchemyDefectsRepository(BaseDefectsRepository):
         models = result.scalars().all()
         
         return [await self._to_entity(m) for m in models]
+    
+    async def find_in_viewport(
+        self,
+        min_lon: float,
+        min_lat: float,
+        max_lon: float,
+        max_lat: float,
+        defect_types: Optional[List[DefectType]] = None,
+        min_severity: Optional[SeverityLevel] = None,
+        limit: int = 1000
+    ) -> List[RoadDefect]:
+        """
+        Находит дефекты внутри прямоугольника (viewport/bounding box).
+        Оптимизировано для карты: загружает только то, что видно на экране.
+        """
+        # 1. Создаем прямоугольник (Bounding Box)
+        bbox = ST_MakeEnvelope(min_lon, min_lat, max_lon, max_lat, 4326)
+        
+        # 2. Формируем запрос
+        stmt = select(RoadDefectModel).where(
+            RoadDefectModel.status == DefectStatus.APPROVED,
+            RoadDefectModel.snapped_geometry.is_not(None),
+            ST_Intersects(RoadDefectModel.snapped_geometry, bbox)
+        )
+        
+        # Фильтры
+        if defect_types:
+            stmt = stmt.where(RoadDefectModel.defect_type.in_(defect_types))
+            
+        if min_severity:
+            stmt = stmt.where(RoadDefectModel.severity >= min_severity)
+        
+        if limit < 500:
+            stmt = stmt.order_by(func.random())
+        
+        stmt = stmt.limit(limit)
+        
+        result = await self.session.execute(stmt)
+        models = result.scalars().all()
+        
+        return [await self._to_entity(m) for m in models]
+    
     
     async def get_pending(self, offset: int = 0, limit: int = 10) -> List[RoadDefect]:
         """Получить дефекты на модерацию"""

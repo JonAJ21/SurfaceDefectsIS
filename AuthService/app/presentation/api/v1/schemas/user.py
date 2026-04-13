@@ -49,6 +49,9 @@ class UserLoginResponseSchema(BaseModel):
             refresh_token=dto.refresh_token
         )
         
+class UserLoggedOutResponseSchema(BaseModel):
+    message: str = "Logged out successfully"
+  
 class UserRefreshTokenResponseSchema(BaseModel):
     access_token: str
     token_type: str
@@ -62,6 +65,17 @@ class UserRefreshTokenResponseSchema(BaseModel):
             token_type=dto.token_type,
             expires_in=dto.expires_in,
             refresh_token=dto.refresh_token
+        )
+
+class GetUserSessionOidsResponseSchema(BaseModel): 
+    user_oid: str
+    session_oid: str
+    
+    @classmethod
+    def from_dto(cls, dto):
+        return cls(
+            user_oid=dto.user_oid,
+            session_oid=dto.session_oid
         )
 
 class GetUserSessionResponseSchema(BaseModel):
@@ -161,4 +175,6 @@ class GetUsersResponseSchema(BaseModel):
             users=[GetUserResponseSchema.from_dto(u) for u in dto]
         )
         
-    
+
+class UserVerifyByEmailResponseSchema(BaseModel):
+    message: str = "Verification email sent successfully"

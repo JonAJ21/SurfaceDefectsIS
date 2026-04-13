@@ -1,0 +1,1938 @@
+Содержимое директории MobileApp/src/screens:
+
+=== Файл: MobileApp/src/screens/MapScreen.js ===
+
+import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import { View, StyleSheet, ActivityIndicator, Alert, Platform, TouchableOpacity, Text } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { WebView } from 'react-native-webview';
+import { getNearbyDefects, DEFECT_TYPE_LABELS } from '../services/defectsService';
+import { WebViewMessageTypes, ReactToWebViewTypes } from '../assets/map/map-bridge';
+import * as Location from 'expo-location';
+import { useAuth } from '../context/AuthContext';
+
+// 🔹 ЕДИНЫЙ HTML ДЛЯ WEB И ANDROID
+const getMapHTML = (baseUrl) => {
+  return `
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <title>RoadDefects Map</title>
+      <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" />
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body, #map { width: 100%; height: 100%; background: #f1f5f9; }
+      </style>
+    </head>
+    <body>
+      <div id="map"></div>
+      <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"><\/script>
+      <script src="https://unpkg.com/pmtiles@2.11.0/dist/index.js"><\/script>
+      <script>
+        var protocol = new pmtiles.Protocol({ cacheSize: 1024 });
+        maplibregl.addProtocol("pmtiles", protocol.tile);
+        
+        var map = new maplibregl.Map({
+          container: 'map',
+          style: {
+            version: 8,
+            glyphs: '${baseUrl}/fonts/{fontstack}/{range}.pbf',
+            sources: {
+              'pmtiles': {
+                type: 'vector',
+                url: 'pmtiles://${baseUrl}/pmtiles/moscow_oblast.pmtiles'
+              }
+            },
+            layers: [
+              { id: 'water', type: 'fill', source: 'pmtiles', 'source-layer': 'water', paint: { 'fill-color': '#dbeafe' } },
+              { id: 'waterway', type: 'line', source: 'pmtiles', 'source-layer': 'waterway', paint: { 'line-color': '#93c5fd', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 0.5, 14, 2] } },
+              { id: 'water_name', type: 'symbol', source: 'pmtiles', 'source-layer': 'water_name', minzoom: 14, layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Italic'], 'text-size': 12 }, paint: { 'text-color': '#1e40af', 'text-halo-color': '#fff', 'text-halo-width': 1 } },
+              { id: 'landcover', type: 'fill', source: 'pmtiles', 'source-layer': 'landcover', paint: { 'fill-color': '#dcfce7', 'fill-opacity': 0.5 } },
+              { id: 'landuse', type: 'fill', source: 'pmtiles', 'source-layer': 'landuse', paint: { 'fill-color': '#f1f5f9', 'fill-opacity': 0.5 } },
+              { id: 'park', type: 'fill', source: 'pmtiles', 'source-layer': 'park', paint: { 'fill-color': '#86efac', 'fill-opacity': 0.6 } },
+              { id: 'building', type: 'fill', source: 'pmtiles', 'source-layer': 'building', paint: { 'fill-color': '#e2e8f0', 'fill-outline-color': '#cbd5e1' } },
+              { id: 'aeroway', type: 'fill', source: 'pmtiles', 'source-layer': 'aeroway', paint: { 'fill-color': '#fbbf24', 'fill-opacity': 0.5 } },
+              { id: 'aerodrome_label', type: 'symbol', source: 'pmtiles', 'source-layer': 'aerodrome_label', minzoom: 10, layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Regular'], 'text-size': 11 }, paint: { 'text-color': '#92400e', 'text-halo-color': '#fff', 'text-halo-width': 1.5 } },
+              { id: 'road_motorway', type: 'line', source: 'pmtiles', 'source-layer': 'transportation', filter: ['==', 'class', 'motorway'], paint: { 'line-color': '#fca5a5', 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1, 10, 4, 16, 14] } },
+              { id: 'road_trunk', type: 'line', source: 'pmtiles', 'source-layer': 'transportation', filter: ['==', 'class', 'trunk'], paint: { 'line-color': '#fdba74', 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.5, 10, 3, 16, 12] } },
+              { id: 'road_primary', type: 'line', source: 'pmtiles', 'source-layer': 'transportation', filter: ['==', 'class', 'primary'], paint: { 'line-color': '#fef3c7', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 0.5, 12, 2, 16, 10] } },
+              { id: 'road_secondary', type: 'line', source: 'pmtiles', 'source-layer': 'transportation', filter: ['==', 'class', 'secondary'], paint: { 'line-color': '#fef3c7', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 0.5, 12, 2, 16, 8] } },
+              { id: 'road_tertiary', type: 'line', source: 'pmtiles', 'source-layer': 'transportation', filter: ['==', 'class', 'tertiary'], paint: { 'line-color': '#fff', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.5, 14, 2, 18, 6] } },
+              { id: 'road_minor', type: 'line', source: 'pmtiles', 'source-layer': 'transportation', filter: ['in', 'class', 'minor', 'service', 'track'], paint: { 'line-color': '#fff', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.5, 14, 2, 18, 6] } },
+              { id: 'road_path', type: 'line', source: 'pmtiles', 'source-layer': 'transportation', filter: ['in', 'class', 'path', 'footway', 'cycleway'], paint: { 'line-color': '#cbd5e1', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 0.5, 16, 2], 'line-dasharray': [2, 2] } },
+              { id: 'road_rail', type: 'line', source: 'pmtiles', 'source-layer': 'transportation', filter: ['==', 'class', 'rail'], paint: { 'line-color': '#cbd5e1', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.5, 14, 1.5], 'line-dasharray': [2, 2] } },
+              { id: 'road_name_motorway', type: 'symbol', source: 'pmtiles', 'source-layer': 'transportation_name', filter: ['==', 'class', 'motorway'], minzoom: 13, layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Bold'], 'text-size': 12, 'symbol-placement': 'line', 'text-rotation-alignment': 'map' }, paint: { 'text-color': '#7f1d1d', 'text-halo-color': '#fff', 'text-halo-width': 1.5 } },
+              { id: 'road_name_major', type: 'symbol', source: 'pmtiles', 'source-layer': 'transportation_name', filter: ['in', 'class', 'primary', 'secondary', 'tertiary'], minzoom: 14, layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Regular'], 'text-size': 11, 'symbol-placement': 'line', 'text-rotation-alignment': 'map' }, paint: { 'text-color': '#334155', 'text-halo-color': '#fff', 'text-halo-width': 1.5 } },
+              { id: 'road_name_minor', type: 'symbol', source: 'pmtiles', 'source-layer': 'transportation_name', filter: ['in', 'class', 'minor', 'service'], minzoom: 15, layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Regular'], 'text-size': 10, 'symbol-placement': 'line', 'text-rotation-alignment': 'map' }, paint: { 'text-color': '#64748b', 'text-halo-color': '#fff', 'text-halo-width': 1 } },
+              { id: 'boundary', type: 'line', source: 'pmtiles', 'source-layer': 'boundary', paint: { 'line-color': '#64748b', 'line-width': ['interpolate', ['linear'], ['zoom'], 4, 1, 8, 2], 'line-dasharray': [3, 2] } },
+              { id: 'place_city', type: 'symbol', source: 'pmtiles', 'source-layer': 'place', filter: ['==', 'class', 'city'], minzoom: 6, layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Bold'], 'text-size': ['interpolate', ['linear'], ['zoom'], 6, 14, 12, 22], 'text-anchor': 'center' }, paint: { 'text-color': '#0f172a', 'text-halo-color': '#fff', 'text-halo-width': 2 } },
+              { id: 'place_town', type: 'symbol', source: 'pmtiles', 'source-layer': 'place', filter: ['==', 'class', 'town'], minzoom: 8, layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 8, 12, 12, 16], 'text-anchor': 'center' }, paint: { 'text-color': '#334155', 'text-halo-color': '#fff', 'text-halo-width': 1.5 } },
+              { id: 'place_village', type: 'symbol', source: 'pmtiles', 'source-layer': 'place', filter: ['in', 'class', 'village', 'hamlet', 'suburb'], minzoom: 10, layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 10, 10, 14, 14], 'text-anchor': 'center' }, paint: { 'text-color': '#64748b', 'text-halo-color': '#fff', 'text-halo-width': 1 } }
+            ]
+          },
+          center: [37.6, 55.6],
+          zoom: 10,
+          minZoom: 8,
+          maxZoom: 19
+        });
+        
+        map.on('load', function() {
+          // ✅ ИСПРАВЛЕНО: добавлен ключ data:
+          map.addSource('defects', { 
+            type: 'geojson', 
+            data: { type: 'FeatureCollection', features: [] }, 
+            cluster: true, 
+            clusterMaxZoom: 14, 
+            clusterRadius: 50 
+          });
+          map.addLayer({ id: 'defects-clusters', type: 'circle', source: 'defects', filter: ['has', 'point_count'], paint: { 'circle-color': ['step', ['get', 'point_count'], '#3b82f6', 10, '#f59e0b', 100, '#ef4444'], 'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 100, 22] } });
+          map.addLayer({ id: 'defects-count', type: 'symbol', source: 'defects', filter: ['has', 'point_count'], layout: { 'text-field': '{point_count_abbreviated}', 'text-font': ['Noto Sans Bold'], 'text-size': 12 }, paint: { 'text-color': '#fff' } });
+          map.addLayer({ id: 'defects-points', type: 'circle', source: 'defects', filter: ['!', ['has', 'point_count']], paint: { 'circle-radius': 9, 'circle-color': '#ef4444', 'circle-stroke-width': 2, 'circle-stroke-color': '#fff' } });
+          
+          if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'MAP_READY' }));
+          } else if (window.parent !== window) {
+            window.parent.postMessage(JSON.stringify({ type: 'MAP_READY' }), '*');
+          }
+        });
+        
+        map.on('click', 'defects-points', function(e) {
+          var props = e.features[0].properties;
+          var msg = JSON.stringify({
+            type: 'DEFECT_CLICK',
+            payload: { id: props.id, lat: e.lngLat.lat, lng: e.lngLat.lng, type: props.type, description: props.description }
+          });
+          if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(msg);
+          else if (window.parent !== window) window.parent.postMessage(msg, '*');
+        });
+        
+        window.addEventListener('message', function(event) {
+          if (event.source === window) return;
+          try {
+            var msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+            
+            if (msg.type === 'SET_DEFECTS' && Array.isArray(msg.payload)) {
+              var features = msg.payload.filter(function(d) { return d.lat && d.lon; }).map(function(d) {
+                return { type: 'Feature', geometry: { type: 'Point', coordinates: [parseFloat(d.lon), parseFloat(d.lat)] }, properties: d };
+              });
+              var source = map.getSource('defects');
+              if (source) source.setData({ type: 'FeatureCollection', features: features });
+            }
+            
+            if (msg.type === 'SET_USER_LOCATION' && msg.payload) {
+              var lat = msg.payload.lat;
+              var lng = msg.payload.lng;
+              if (map.getLayer('user-marker')) map.removeLayer('user-marker');
+              if (map.getSource('user-location')) map.removeSource('user-location');
+              // ✅ ИСПРАВЛЕНО: добавлен ключ data:
+              map.addSource('user-location', { 
+                type: 'geojson', 
+                data: { type: 'Feature', geometry: { type: 'Point', coordinates: [lng, lat] }, properties: {} } 
+              });
+              map.addLayer({ id: 'user-marker', type: 'circle', source: 'user-location', paint: { 'circle-radius': 12, 'circle-color': '#3b82f6', 'circle-stroke-width': 3, 'circle-stroke-color': '#fff' } });
+            }
+          } catch(e) { console.error('Map internal error:', e); }
+        });
+      <\/script>
+    </body>
+    </html>
+  `;
+};
+
+export default function MapScreen({ navigation }) {
+  const webViewRef = useRef(null);
+  const [mapReady, setMapReady] = useState(false);
+  const [defects, setDefects] = useState([]);
+  const [userLocation, setUserLocation] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+  const { user } = useAuth();
+
+  const baseUrl = useMemo(() => {
+    return Platform.OS === 'web' ? 'http://localhost:9000' : 'http://10.0.2.2:9000';
+  }, []);
+
+  const mapHtml = useMemo(() => getMapHTML(baseUrl), [baseUrl]);
+
+  const fetchNearbyDefects = useCallback(async (lat, lng, radius = 500) => {
+    try {
+      const data = await getNearbyDefects({ latitude: lat, longitude: lng, radius_meters: radius });
+      const features = data.map(d => ({
+        id: d.id,
+        lat: d.snapped_coordinates?.[1] || d.original_coordinates?.[1],
+        lon: d.snapped_coordinates?.[0] || d.original_coordinates?.[0],
+        type: DEFECT_TYPE_LABELS[d.defect_type] || d.defect_type,
+        severity: d.severity,
+        description: d.description,
+        status: d.status,
+        road_name: d.road_name,
+        distance_meters: d.distance_meters,
+        photos: d.photos || [],
+        created_at: d.created_at
+      }));
+      setDefects(features);
+    } catch (e) { console.error('Fetch nearby defects error:', e); }
+  }, []);
+
+  const requestLocation = useCallback(async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') { fetchNearbyDefects(55.6, 37.6); return; }
+      const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      const { latitude, longitude } = location.coords;
+      setUserLocation({ lat: latitude, lng: longitude });
+      sendToMap(ReactToWebViewTypes.SET_USER_LOCATION, { lat: latitude, lng: longitude });
+      await fetchNearbyDefects(latitude, longitude, 1000);
+    } catch (e) { fetchNearbyDefects(55.6, 37.6); }
+    finally { setLoading(false); }
+  }, [fetchNearbyDefects]);
+
+  const sendToMap = useCallback((type, payload) => {
+    const msg = JSON.stringify({ type, payload });
+    if (Platform.OS === 'web') {
+      const iframe = document.querySelector('iframe#map-iframe');
+      if (iframe?.contentWindow) iframe.contentWindow.postMessage(msg, '*');
+    } else {
+      if (webViewRef.current && mapReady) webViewRef.current.postMessage(msg);
+    }
+  }, [mapReady]);
+
+  const handleMapMessage = useCallback((data) => {
+    try {
+      if (typeof data !== 'string') return;
+      const msg = JSON.parse(data);
+      if (!msg || !msg.type) return;
+
+      if (msg.type === WebViewMessageTypes.MAP_READY) {
+        setMapReady(true);
+        requestLocation();
+      }
+      if (msg.type === WebViewMessageTypes.DEFECT_CLICK) {
+        Alert.alert(msg.payload.type || 'Дефект', `${msg.payload.description || ''}\n📍 ${msg.payload.road_name || ''}`, [{ text: 'Закрыть', style: 'cancel' }]);
+      }
+      if (msg.type === WebViewMessageTypes.LOCATION_UPDATE) {
+        setUserLocation(msg.payload);
+      }
+    } catch (e) {
+      // Тихо игнорируем ошибки от сторонних расширений
+    }
+  }, [requestLocation]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const listener = (e) => handleMapMessage(e.data);
+    window.addEventListener('message', listener);
+    return () => window.removeEventListener('message', listener);
+  }, [handleMapMessage]);
+
+  useEffect(() => { if (mapReady && defects.length > 0) sendToMap(ReactToWebViewTypes.SET_DEFECTS, defects); }, [defects, mapReady, sendToMap]);
+  useEffect(() => { if (mapReady && userLocation) sendToMap(ReactToWebViewTypes.SET_USER_LOCATION, userLocation); }, [userLocation, mapReady, sendToMap]);
+
+  return (
+    <View style={styles.container}>
+      {Platform.OS === 'web' ? (
+        <iframe 
+          id="map-iframe" 
+          srcDoc={mapHtml} 
+          style={styles.iframe} 
+          title="Map" 
+          onLoad={() => console.log('🗺️ Iframe loaded')}
+          sandbox="allow-scripts allow-same-origin allow-popups"
+        />
+      ) : (
+        <WebView
+          ref={webViewRef}
+          originWhitelist={['*', 'http://*', 'https://*', 'pmtiles://*']}
+          source={{ html: mapHtml }}
+          style={styles.webview}
+          onMessage={(e) => handleMapMessage(e.nativeEvent.data)}
+          javaScriptEnabled={true}
+          domStorageEnabled={true}
+          allowsFullscreenVideo={true}
+          bounces={false}
+          scrollEnabled={false}
+          mixedContentMode="compatibility"
+          allowsInlineMediaPlayback={true}
+          mediaPlaybackRequiresUserAction={false}
+          androidLayerType="hardware"
+          onLoadEnd={() => setMapReady(true)}
+        />
+      )}
+
+      <TouchableOpacity
+        style={styles.profileButton}
+        onPress={() => user ? navigation.navigate('Profile') : navigation.navigate('Login')}
+      >
+        {user ? (
+          <View style={styles.avatarContainer}>
+            <Text style={styles.avatarText}>{(user.full_name || user.email || 'U').charAt(0).toUpperCase()}</Text>
+          </View>
+        ) : (
+          <Ionicons name="person-outline" size={24} color="#0f172a" />
+        )}
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.fab}
+        onPress={() => user
+          ? navigation.navigate('CreateDefect', { initialCoords: userLocation || { lat: 55.6, lng: 37.6 } })
+          : Alert.alert('Авторизация', 'Войдите, чтобы добавить дефект', [{ text: 'Войти', onPress: () => navigation.navigate('Login') }])
+        }
+      >
+        <Ionicons name="add" size={28} color="#fff" />
+      </TouchableOpacity>
+
+      {(loading || !mapReady) && (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color="#2563eb" />
+          <Text style={styles.loadingText}>Загрузка карты...</Text>
+          {loadError && <Text style={styles.errorText}>❌ {loadError}</Text>}
+        </View>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f8fafc' },
+  webview: { flex: 1 },
+  iframe: { flex: 1, borderWidth: 0, width: '100%', height: '100%' },
+  loadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(248,250,252,0.9)', justifyContent: 'center', alignItems: 'center', zIndex: 100 },
+  loadingText: { marginTop: 12, fontSize: 15, color: '#64748b' },
+  errorText: { marginTop: 8, fontSize: 13, color: '#dc2626', textAlign: 'center' },
+  profileButton: {
+    position: 'absolute', top: 16, right: 16, width: 48, height: 48, borderRadius: 24,
+    backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center',
+    elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1, shadowRadius: 4, zIndex: 60, borderWidth: 1, borderColor: '#e2e8f0'
+  },
+  avatarContainer: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#2563eb', justifyContent: 'center', alignItems: 'center' },
+  avatarText: { color: '#fff', fontSize: 18, fontWeight: '700' },
+  fab: { position: 'absolute', bottom: 24, left: 24, width: 56, height: 56, borderRadius: 28, backgroundColor: '#2563eb', justifyContent: 'center', alignItems: 'center', elevation: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.25, shadowRadius: 4, zIndex: 50 }
+});
+=== Файл: MobileApp/src/screens/AdminUsersScreen.js ===
+
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, TextInput } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { authApi } from '../config/api';
+
+const PAGE_SIZE = 20;
+
+export default function AdminUsersScreen({ navigation }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const fetchUsers = async (currentOffset) => {
+    setLoading(true);
+    try {
+      const { data } = await authApi.get('/v1/users', {
+        params: { offset: currentOffset, limit: PAGE_SIZE }
+      });
+      const list = data.users || data || [];
+      setUsers(list);
+      // Если вернули меньше, чем размер страницы → это последняя страница
+      setHasMore(list.length === PAGE_SIZE);
+    } catch (e) {
+      console.error('Fetch users error:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Сброс на первую страницу при изменении поиска
+  useEffect(() => {
+    setOffset(0);
+  }, [searchQuery]);
+
+  // Загрузка данных при изменении offset
+  useEffect(() => {
+    fetchUsers(offset);
+  }, [offset]);
+
+  const filteredUsers = users.filter(u =>
+    u.email?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const handleNext = () => {
+    if (hasMore && !loading) setOffset(prev => prev + PAGE_SIZE);
+  };
+
+  const handlePrev = () => {
+    if (offset > 0 && !loading) setOffset(prev => Math.max(0, prev - PAGE_SIZE));
+  };
+
+  const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <Ionicons name="arrow-back" size={24} color="#0f172a" />
+        </TouchableOpacity>
+        <Text style={styles.title}>Пользователи</Text>
+      </View>
+
+      <View style={styles.searchBox}>
+        <Ionicons name="search" size={20} color="#94a3b8" />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Поиск по email..."
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+      </View>
+
+      {loading && users.length === 0 ? (
+        <ActivityIndicator size="large" color="#2563eb" style={{ marginTop: 40 }} />
+      ) : (
+        <>
+          <ScrollView contentContainerStyle={styles.list}>
+            {filteredUsers.length === 0 ? (
+              <Text style={styles.empty}>Пользователи не найдены</Text>
+            ) : (
+              filteredUsers.map(user => (
+                <TouchableOpacity
+                  key={user.oid}
+                  style={styles.card}
+                  onPress={() => navigation.navigate('AdminUserDetail', { userIdentifier: `oid_${user.oid}` })}
+                >
+                  <View style={styles.userHeader}>
+                    <View style={styles.avatarPlaceholder}>
+                      <Text style={styles.avatarText}>{user.email?.[0]?.toUpperCase() || '?'}</Text>
+                    </View>
+                    <View style={styles.userInfo}>
+                      <Text style={styles.userName}>{user.email}</Text>
+                      <Text style={[styles.badge, user.is_active ? styles.badgeActive : styles.badgeInactive]}>
+                        {user.is_active ? 'Активен' : 'Неактивен'}
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color="#cbd5e1" />
+                  </View>
+                </TouchableOpacity>
+              ))
+            )}
+          </ScrollView>
+
+          {/* 🔹 Панель пагинации */}
+          <View style={styles.pagination}>
+            <TouchableOpacity
+              style={[styles.pageBtn, offset === 0 && styles.pageBtnDisabled]}
+              onPress={handlePrev}
+              disabled={offset === 0 || loading}
+            >
+              <Ionicons name="chevron-back" size={16} color={offset === 0 ? '#cbd5e1' : '#0f172a'} />
+              <Text style={[styles.pageText, offset === 0 && styles.pageTextDisabled]}>Назад</Text>
+            </TouchableOpacity>
+
+            <View style={styles.pageIndicatorBox}>
+              <Text style={styles.pageIndicator}>Стр. {currentPage}</Text>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.pageBtn, !hasMore && styles.pageBtnDisabled]}
+              onPress={handleNext}
+              disabled={!hasMore || loading}
+            >
+              <Text style={[styles.pageText, !hasMore && styles.pageTextDisabled]}>Вперёд</Text>
+              <Ionicons name="chevron-forward" size={16} color={!hasMore ? '#cbd5e1' : '#0f172a'} />
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f8fafc' },
+  header: { flexDirection: 'row', alignItems: 'center', padding: 20, paddingBottom: 10 },
+  backBtn: { padding: 8, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0', marginRight: 12 },
+  title: { fontSize: 20, fontWeight: '700', color: '#0f172a' },
+  searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: '#e2e8f0', marginHorizontal: 20, marginBottom: 16 },
+  searchInput: { flex: 1, padding: 12, fontSize: 15 },
+  list: { paddingHorizontal: 20, paddingBottom: 20 },
+  card: { backgroundColor: '#fff', padding: 16, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0' },
+  userHeader: { flexDirection: 'row', alignItems: 'center' },
+  avatarPlaceholder: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#eff6ff', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  avatarText: { fontSize: 18, fontWeight: '600', color: '#2563eb' },
+  userInfo: { flex: 1 },
+  userName: { fontSize: 15, fontWeight: '600', color: '#0f172a', marginBottom: 4 },
+  badge: { fontSize: 12, fontWeight: '500', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12, alignSelf: 'flex-start' },
+  badgeActive: { backgroundColor: '#f0fdf4', color: '#166534' },
+  badgeInactive: { backgroundColor: '#fef2f2', color: '#dc2626' },
+  empty: { textAlign: 'center', color: '#94a3b8', marginTop: 40 },
+  
+  // 🔹 Стили пагинации
+  pagination: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderTopWidth: 1, borderTopColor: '#e2e8f0', backgroundColor: '#fff' },
+  pageBtn: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
+  pageBtnDisabled: { opacity: 0.5 },
+  pageText: { fontSize: 14, fontWeight: '600', color: '#0f172a', marginHorizontal: 4 },
+  pageTextDisabled: { color: '#94a3b8' },
+  pageIndicatorBox: { backgroundColor: '#f1f5f9', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  pageIndicator: { fontSize: 13, fontWeight: '600', color: '#475569' }
+});
+=== Файл: MobileApp/src/screens/ModeratorDashboardScreen.js ===
+
+import React from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../context/AuthContext';
+
+export default function ModeratorDashboardScreen({ navigation }) {
+  const { user, isModerator } = useAuth();
+
+  if (!isModerator) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.error}>🚫 Доступ запрещён</Text>
+        <TouchableOpacity style={styles.button} onPress={() => navigation.goBack()}>
+          <Text style={styles.buttonText}>Назад в профиль</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const menuItems = [
+    { icon: 'location-outline', title: 'Новые дефекты', desc: 'Проверка заявок от пользователей', color: '#f59e0b', count: 3 },
+    { icon: 'checkmark-circle-outline', title: 'Верифицированные', desc: 'Одобренные дефекты на карте', color: '#10b981', count: 12 },
+    { icon: 'close-circle-outline', title: 'Отклонённые', desc: 'Отклонённые заявки', color: '#ef4444', count: 1 },
+  ];
+
+  return (
+    <ScrollView contentContainerStyle={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}><Ionicons name="arrow-back" size={24} color="#0f172a" /></TouchableOpacity>
+        <Text style={styles.title}>🔍 Модерация</Text>
+      </View>
+
+      <View style={styles.statsRow}>
+        {menuItems.map(item => (
+          <View key={item.title} style={styles.statCard}>
+            <Text style={styles.statCount}>{item.count}</Text>
+            <Text style={styles.statLabel}>{item.title}</Text>
+          </View>
+        ))}
+      </View>
+
+      <Text style={styles.sectionTitle}>Действия</Text>
+      <View style={styles.actionList}>
+        {menuItems.map(item => (
+          <TouchableOpacity key={item.title} style={styles.actionItem}>
+            <Ionicons name={item.icon} size={24} color={item.color} />
+            <View style={styles.actionInfo}>
+              <Text style={styles.actionTitle}>{item.title}</Text>
+              <Text style={styles.actionDesc}>{item.desc}</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#94a3b8" />
+          </TouchableOpacity>
+        ))}
+      </View>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flexGrow: 1, backgroundColor: '#f8fafc', padding: 20 },
+  header: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  backBtn: { padding: 8, marginRight: 12, borderRadius: 8, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0' },
+  title: { fontSize: 24, fontWeight: '700', color: '#0f172a' },
+  statsRow: { flexDirection: 'row', gap: 12, marginBottom: 24 },
+  statCard: { flex: 1, backgroundColor: '#fff', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center' },
+  statCount: { fontSize: 20, fontWeight: '700', color: '#0f172a' },
+  statLabel: { fontSize: 11, color: '#64748b', marginTop: 4 },
+  sectionTitle: { fontSize: 16, fontWeight: '600', color: '#334155', marginBottom: 12 },
+  actionList: { gap: 12 },
+  actionItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0' },
+  actionInfo: { flex: 1, marginLeft: 12 },
+  actionTitle: { fontSize: 15, fontWeight: '600', color: '#0f172a' },
+  actionDesc: { fontSize: 12, color: '#64748b' },
+  error: { fontSize: 16, color: '#dc2626', textAlign: 'center', marginTop: 100, marginBottom: 20 },
+  button: { backgroundColor: '#2563eb', padding: 14, borderRadius: 10, alignItems: 'center' },
+  buttonText: { color: '#fff', fontWeight: '600' }
+});
+=== Файл: MobileApp/src/screens/AdminDashboardScreen.js ===
+
+import React from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../context/AuthContext';
+
+export default function AdminDashboardScreen({ navigation }) {
+  const { user, isAdmin } = useAuth();
+
+  if (!isAdmin) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.error}>🚫 Доступ запрещён</Text>
+        <TouchableOpacity style={styles.button} onPress={() => navigation.goBack()}>
+          <Text style={styles.buttonText}>Назад в профиль</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const menuItems = [
+    { 
+      icon: 'people-outline', 
+      title: 'Пользователи', 
+      desc: 'Управление доступом и ролями', 
+      color: '#3b82f6', 
+      screen: 'AdminUsers' 
+    },
+    { 
+      icon: 'shield-checkmark-outline', 
+      title: 'Роли', 
+      desc: 'Создание и настройка ролей', 
+      color: '#8b5cf6', 
+      screen: 'AdminRoles' 
+    },
+    { 
+      icon: 'key-outline', 
+      title: 'Разрешения', 
+      desc: 'Управление кодами доступа', 
+      color: '#f59e0b', 
+      screen: 'AdminPermissions' 
+    },
+  ];
+
+
+  return (
+    <ScrollView contentContainerStyle={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}><Ionicons name="arrow-back" size={24} color="#0f172a" /></TouchableOpacity>
+        <Text style={styles.title}>⚙️ Админ-панель</Text>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.welcome}>Привет, {user?.email}</Text>
+        <Text style={styles.desc}>Управление доступом к системе.</Text>
+      </View>
+
+      <Text style={styles.sectionTitle}>Управление RBAC</Text>
+      <View style={styles.grid}>
+        {menuItems.map((item) => (
+          <TouchableOpacity 
+            key={item.title} 
+            style={[styles.menuCard, { borderTopColor: item.color }]} 
+            onPress={() => navigation.navigate(item.screen)}
+          >
+            <View style={[styles.iconBox, { backgroundColor: `${item.color}15` }]}>
+              <Ionicons name={item.icon} size={28} color={item.color} />
+            </View>
+            <Text style={styles.menuTitle}>{item.title}</Text>
+            <Text style={styles.menuDesc}>{item.desc}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flexGrow: 1, backgroundColor: '#f8fafc', padding: 20 },
+  header: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  backBtn: { padding: 8, marginRight: 12, borderRadius: 8, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0' },
+  title: { fontSize: 24, fontWeight: '700', color: '#0f172a' },
+  card: { backgroundColor: '#fff', padding: 16, borderRadius: 12, marginBottom: 20, borderWidth: 1, borderColor: '#e2e8f0' },
+  welcome: { fontSize: 16, fontWeight: '600', color: '#0f172a', marginBottom: 4 },
+  desc: { fontSize: 13, color: '#64748b' },
+  sectionTitle: { fontSize: 16, fontWeight: '600', color: '#334155', marginBottom: 12 },
+  grid: { gap: 16 },
+  menuCard: { backgroundColor: '#fff', padding: 16, borderRadius: 14, borderWidth: 1, borderColor: '#e2e8f0', borderTopWidth: 4 },
+  iconBox: { width: 44, height: 44, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
+  menuTitle: { fontSize: 15, fontWeight: '600', color: '#0f172a', marginBottom: 4 },
+  menuDesc: { fontSize: 12, color: '#64748b' },
+  error: { fontSize: 16, color: '#dc2626', textAlign: 'center', marginTop: 100, marginBottom: 20 },
+  button: { backgroundColor: '#2563eb', padding: 14, borderRadius: 10, alignItems: 'center' },
+  buttonText: { color: '#fff', fontWeight: '600' }
+});
+=== Файл: MobileApp/src/screens/MainAppScreen.js ===
+
+import React from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'react-native';
+import { useAuth } from '../context/AuthContext';
+
+export default function MainAppScreen() {
+  const { user, logout, isAuthenticated } = useAuth();
+
+  const handleLogout = () => {
+    Alert.alert('Выход', 'Выйти только из этой сессии или из всех устройств?', [
+      { text: 'Эта сессия', onPress: () => logout(false) },
+      { text: 'Все сессии', style: 'destructive', onPress: () => logout(true) },
+      { text: 'Отмена', style: 'cancel' }
+    ]);
+  };
+
+  if (!isAuthenticated) return null;
+
+  return (
+    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+      <Text style={styles.title}>🗺️ Карта дефектов</Text>
+      <Text style={styles.subtitle}>
+        Добро пожаловать, {user?.email || 'Пользователь'}
+      </Text>
+      
+      <View style={styles.card}>
+        <Text style={styles.label}>Статус:</Text>
+        <Text style={styles.value}>{user?.is_active ? '✅ Активен' : '❌ Неактивен'}</Text>
+        
+        <Text style={[styles.label, { marginTop: 12 }]}>Верификация:</Text>
+        <Text style={styles.value}>{user?.is_verified ? '✅ Подтверждён' : '⚠️ Ожидает подтверждения'}</Text>
+        
+        <Text style={[styles.label, { marginTop: 12 }]}>Роли:</Text>
+        <Text style={styles.value}>
+          {user?.roles?.length > 0 ? user.roles.map(r => r.name).join(', ') : 'Нет ролей'}
+        </Text>
+      </View>
+
+      <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
+        <Text style={styles.logoutText}>Выйти из аккаунта</Text>
+      </TouchableOpacity>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc', padding: 24 },
+  title: { fontSize: 24, fontWeight: '700', marginBottom: 8, color: '#0f172a' },
+  subtitle: { fontSize: 15, textAlign: 'center', marginBottom: 24, color: '#64748b' },
+  card: { backgroundColor: '#fff', padding: 20, borderRadius: 16, width: '100%', maxWidth: 400, marginBottom: 24, borderWidth: 1, borderColor: '#e2e8f0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
+  label: { fontSize: 13, color: '#64748b', marginBottom: 4 },
+  value: { fontSize: 15, fontWeight: '600', color: '#0f172a' },
+  logoutButton: { backgroundColor: '#ef4444', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 },
+  logoutText: { color: '#fff', fontWeight: '600' }
+});
+=== Файл: MobileApp/src/screens/ProfileScreen.js ===
+
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../context/AuthContext';
+import { formatDate } from '../utils/date'; // 🔹 Импорт утилиты
+
+export default function ProfileScreen({ navigation }) {
+  const { user, isAuthenticated, verifyEmail, logout, loading, apiError, successMessage, isAdmin, isModerator } = useAuth();
+  const [showAllSessions, setShowAllSessions] = useState(false);
+
+  const handleLogout = async (allSessions = false) => {
+    await logout(allSessions);
+    navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
+  };
+
+  if (!isAuthenticated) {
+    return (
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}><Ionicons name="arrow-back" size={24} color="#0f172a" /></TouchableOpacity>
+          <Text style={styles.title}>Профиль</Text>
+        </View>
+        <View style={styles.emptyState}>
+          <Ionicons name="person-remove-outline" size={48} color="#94a3b8" />
+          <Text style={styles.emptyText}>Вы не авторизованы</Text>
+          <TouchableOpacity style={styles.button} onPress={() => navigation.navigate('Login')}>
+            <Text style={styles.buttonText}>Войти в систему</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    );
+  }
+
+  const sessions = user?.sessions || [];
+  const currentSessionOid = user?.currentSessionOid;
+  const currentSession = sessions.find(s => s.oid === currentSessionOid);
+  const otherSessions = sessions.filter(s => s.oid !== currentSessionOid);
+
+  return (
+    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}><Ionicons name="arrow-back" size={24} color="#0f172a" /></TouchableOpacity>
+        <Text style={styles.title}>Мой профиль</Text>
+      </View>
+
+      {successMessage && <View style={[styles.messageBox, styles.successBox]}><Text style={styles.successText}>{successMessage}</Text></View>}
+      {apiError && <View style={[styles.messageBox, styles.errorBox]}><Text style={styles.errorText}>{apiError}</Text></View>}
+
+      <View style={styles.card}>
+        <Text style={styles.label}>Email</Text>
+        <View style={styles.row}>
+          <Text style={styles.value}>{user?.email}</Text>
+          {user?.is_verified ? (
+            <View style={styles.verifiedBadge}><Ionicons name="checkmark-circle" size={16} color="#16a34a" /><Text style={styles.verifiedText}>Верифицирован</Text></View>
+          ) : (
+            <View style={styles.unverifiedBadge}><Ionicons name="alert-circle" size={16} color="#f59e0b" /><Text style={styles.unverifiedText}>Не верифицирован</Text></View>
+          )}
+        </View>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.label}>Роли</Text>
+        <View style={styles.chipContainer}>
+          {user?.roles?.length > 0 ? user.roles.map(role => (
+            <View key={role.oid} style={styles.chip}><Text style={styles.chipText}>{role.name}</Text></View>
+          )) : <Text style={styles.placeholder}>Нет назначенных ролей</Text>}
+        </View>
+      </View>
+
+      {(isAdmin || isModerator) && (
+        <View style={styles.card}>
+          <Text style={styles.label}>🛠️ Панели управления</Text>
+          <View style={styles.panelGrid}>
+            {isAdmin && (
+              <TouchableOpacity style={[styles.panelBtn, styles.adminPanelBtn]} onPress={() => navigation.navigate('AdminDashboard')}>
+                <Ionicons name="shield-checkmark" size={24} color="#fff" />
+                <Text style={styles.panelBtnText}>Админ-панель</Text>
+              </TouchableOpacity>
+            )}
+            {isModerator && (
+              <TouchableOpacity style={[styles.panelBtn, styles.modPanelBtn]} onPress={() => navigation.navigate('ModeratorDashboard')}>
+                <Ionicons name="checkmark-done" size={24} color="#fff" />
+                <Text style={styles.panelBtnText}>Модерация дефектов</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      )}
+
+      <View style={styles.card}>
+        <Text style={styles.label}>🖥️ Сессии</Text>
+        {currentSession && (
+          <>
+            <View style={[styles.sessionItem, styles.currentSession]}>
+              <View style={styles.sessionHeader}>
+                <Text style={styles.sessionDevice}>{currentSession.user_agent || 'Неизвестное устройство'}</Text>
+                <View style={styles.currentBadge}><Text style={styles.currentBadgeText}>Текущая</Text></View>
+              </View>
+              <View style={styles.sessionMeta}>
+                {/* 🔹 Теперь используется formatDate из утилиты */}
+                <Text style={styles.sessionText}>Создана: {formatDate(currentSession.created_at)}</Text>
+                <Text style={styles.sessionText}>Обновлена: {formatDate(currentSession.refreshed_at)}</Text>
+              </View>
+            </View>
+            {otherSessions.length > 0 && (
+              <TouchableOpacity style={styles.toggleSessionsBtn} onPress={() => setShowAllSessions(!showAllSessions)}>
+                <Ionicons name={showAllSessions ? 'chevron-up' : 'chevron-down'} size={18} color="#2563eb" />
+                <Text style={styles.toggleSessionsText}>{showAllSessions ? 'Скрыть остальные' : `Показать остальные (${otherSessions.length})`}</Text>
+              </TouchableOpacity>
+            )}
+            {showAllSessions && otherSessions.map(session => (
+              <View key={session.oid} style={styles.sessionItem}>
+                <Text style={styles.sessionDevice}>{session.user_agent || 'Неизвестное устройство'}</Text>
+                <View style={styles.sessionMeta}>
+                  <Text style={styles.sessionText}>Создана: {formatDate(session.created_at)}</Text>
+                  <Text style={styles.sessionText}>Обновлена: {formatDate(session.refreshed_at)}</Text>
+                </View>
+              </View>
+            ))}
+          </>
+        )}
+      </View>
+
+      {!user?.is_verified && (
+        <TouchableOpacity style={styles.actionButton} onPress={verifyEmail} disabled={loading}>
+          {loading ? <ActivityIndicator color="#fff" /> : (<><Ionicons name="mail-outline" size={20} color="#fff" /><Text style={styles.actionButtonText}>Отправить письмо подтверждения</Text></>)}
+        </TouchableOpacity>
+      )}
+
+      <View style={styles.divider} />
+      <TouchableOpacity style={[styles.actionButton, styles.logoutBtn]} onPress={() => handleLogout(false)} disabled={loading}>
+        <Ionicons name="log-out-outline" size={20} color="#fff" /><Text style={styles.actionButtonText}>Выйти из текущей сессии</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={[styles.actionButton, styles.logoutAllBtn]} onPress={() => handleLogout(true)} disabled={loading}>
+        <Ionicons name="close-circle-outline" size={20} color="#fff" /><Text style={styles.actionButtonText}>Выйти со всех устройств</Text>
+      </TouchableOpacity>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flexGrow: 1, backgroundColor: '#f8fafc', padding: 20, paddingBottom: 40 },
+  header: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  backBtn: { padding: 8, marginRight: 12, borderRadius: 8, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0' },
+  title: { fontSize: 24, fontWeight: '700', color: '#0f172a' },
+  card: { backgroundColor: '#fff', padding: 16, borderRadius: 16, marginBottom: 16, borderWidth: 1, borderColor: '#e2e8f0' },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  label: { fontSize: 13, fontWeight: '500', color: '#64748b', marginBottom: 6 },
+  value: { fontSize: 15, fontWeight: '600', color: '#0f172a' },
+  verifiedBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f0fdf4', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, gap: 4 },
+  verifiedText: { fontSize: 12, fontWeight: '500', color: '#166534' },
+  unverifiedBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fffbeb', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, gap: 4 },
+  unverifiedText: { fontSize: 12, fontWeight: '500', color: '#b45309' },
+  divider: { height: 1, backgroundColor: '#f1f5f9', marginVertical: 12 },
+  chipContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: { backgroundColor: '#eff6ff', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: '#bfdbfe' },
+  chipText: { fontSize: 13, fontWeight: '500', color: '#1e40af' },
+  placeholder: { fontSize: 13, color: '#94a3b8', fontStyle: 'italic' },
+  panelGrid: { flexDirection: 'row', gap: 12, marginTop: 8 },
+  panelBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 14, borderRadius: 12, gap: 8 },
+  adminPanelBtn: { backgroundColor: '#7c3aed' },
+  modPanelBtn: { backgroundColor: '#059669' },
+  panelBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  sessionItem: { backgroundColor: '#f8fafc', padding: 12, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 10 },
+  currentSession: { backgroundColor: '#eff6ff', borderColor: '#bfdbfe' },
+  sessionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  sessionDevice: { fontSize: 14, fontWeight: '600', color: '#334155' },
+  currentBadge: { backgroundColor: '#2563eb', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 },
+  currentBadgeText: { fontSize: 10, fontWeight: '700', color: '#fff', textTransform: 'uppercase' },
+  sessionMeta: { gap: 2 },
+  sessionText: { fontSize: 12, color: '#64748b' },
+  toggleSessionsBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, gap: 6 },
+  toggleSessionsText: { fontSize: 13, fontWeight: '600', color: '#2563eb' },
+  messageBox: { padding: 10, borderRadius: 10, marginBottom: 12, borderWidth: 1 },
+  successBox: { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
+  successText: { color: '#166534', textAlign: 'center', fontSize: 13 },
+  errorBox: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
+  errorText: { color: '#dc2626', textAlign: 'center', fontSize: 13 },
+  actionButton: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: '#2563eb', padding: 14, borderRadius: 12, marginBottom: 12 },
+  logoutBtn: { backgroundColor: '#ef4444' },
+  logoutAllBtn: { backgroundColor: '#f97316' },
+  actionButtonText: { color: '#fff', fontWeight: '600', marginLeft: 8, fontSize: 15 },
+  emptyState: { flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 40 },
+  emptyText: { fontSize: 16, color: '#64748b', marginTop: 12, marginBottom: 20 },
+  button: { backgroundColor: '#2563eb', padding: 14, borderRadius: 12, width: '100%', alignItems: 'center' },
+  buttonText: { color: '#fff', fontWeight: '600' }
+});
+=== Файл: MobileApp/src/screens/LoginModal.js ===
+
+import React, { useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../context/AuthContext';
+
+export default function LoginModal({ navigation }) {
+  const { login, loading, apiError, successMessage } = useAuth();
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
+  const handleLogin = async () => {
+    if (!username.trim() || !password.trim()) return;
+    try {
+      await login({ username, password });
+      navigation.goBack();
+    } catch {}
+  };
+
+  return (
+    <View style={styles.backdrop}>
+      <TouchableOpacity style={styles.backdropTouchable} activeOpacity={1} onPress={() => navigation.goBack()} />
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.container}>
+        <View style={styles.modalCard}>
+          <View style={styles.header}>
+            <Text style={styles.title}>Вход</Text>
+            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.closeBtn}><Ionicons name="close" size={24} color="#64748b" /></TouchableOpacity>
+          </View>
+          {successMessage && <View style={styles.successBox}><Text style={styles.successText}>{successMessage}</Text></View>}
+          {apiError && <View style={styles.errorBox}><Text style={styles.errorText}>{apiError}</Text></View>}
+          <TextInput style={styles.input} placeholder="Email" value={username} onChangeText={setUsername} autoCapitalize="none" keyboardType="email-address" />
+          <View style={styles.passwordWrapper}>
+            <TextInput style={styles.passwordInput} placeholder="Пароль" value={password} onChangeText={setPassword} secureTextEntry={!showPassword} autoCapitalize="none" />
+            <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeButton}><Ionicons name={showPassword ? 'eye-off' : 'eye'} size={22} color="#64748b" /></TouchableOpacity>
+          </View>
+          <TouchableOpacity style={styles.button} onPress={handleLogin} disabled={loading}>
+            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Войти</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => navigation.replace('Register')} style={styles.linkContainer}><Text style={styles.linkText}>Нет аккаунта? Зарегистрироваться</Text></TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  backdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.4)', justifyContent: 'center', alignItems: 'center' },
+  backdropTouchable: { ...StyleSheet.absoluteFillObject },
+  container: { width: '90%', maxWidth: 480, paddingHorizontal: 16 },
+  modalCard: { backgroundColor: '#fff', borderRadius: 20, padding: 24, elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 10 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  title: { fontSize: 24, fontWeight: '700', color: '#0f172a' },
+  closeBtn: { padding: 4 },
+  input: { backgroundColor: '#f8fafc', padding: 14, borderRadius: 10, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0' },
+  passwordWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc', borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 16 },
+  passwordInput: { flex: 1, padding: 14 },
+  eyeButton: { padding: 12 },
+  successBox: { backgroundColor: '#f0fdf4', padding: 10, borderRadius: 8, marginBottom: 12, borderWidth: 1, borderColor: '#bbf7d0' },
+  successText: { color: '#166534', textAlign: 'center', fontSize: 13 },
+  errorBox: { backgroundColor: '#fef2f2', padding: 10, borderRadius: 8, marginBottom: 12, borderWidth: 1, borderColor: '#fecaca' },
+  errorText: { color: '#dc2626', textAlign: 'center', fontSize: 13 },
+  button: { backgroundColor: '#2563eb', padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 4 },
+  buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  linkContainer: { marginTop: 16, alignItems: 'center' },
+  linkText: { color: '#2563eb', fontSize: 14, fontWeight: '500' }
+});
+=== Файл: MobileApp/src/screens/AdminUserDetailScreen.js ===
+
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Switch, Alert } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { authApi } from '../config/api';
+
+export default function AdminUserDetailScreen({ route, navigation }) {
+  const { userIdentifier } = route.params; // Уже в формате oid_xxx
+  const [user, setUser] = useState(null);
+  const [allRoles, setAllRoles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      // 🔹 GET с префиксом
+      const userRes = await authApi.get(`/v1/users/${userIdentifier}`, { params: { load_roles: true } });
+      setUser(userRes.data);
+
+      const rolesRes = await authApi.get('/v1/roles', { params: { limit: 50 } });
+      setAllRoles(rolesRes.data.roles || rolesRes.data || []);
+    } catch (e) {
+      console.error('Fetch error:', e);
+      Alert.alert('Ошибка', 'Не удалось загрузить данные');
+    } finally { setLoading(false); }
+  };
+
+  useEffect(() => { fetchData(); }, []);
+
+  const toggleStatus = async () => {
+    if (!user || actionLoading) return;
+    setActionLoading(true);
+    try {
+      // 🔹 PATCH activate/deactivate с префиксом
+      const endpoint = user.is_active 
+        ? `/v1/users/${userIdentifier}/deactivate`
+        : `/v1/users/${userIdentifier}/activate`;
+      
+      await authApi.patch(endpoint);
+      await fetchData();
+    } catch (e) {
+      console.error('Status toggle error:', e);
+      Alert.alert('Ошибка', e.response?.data?.detail || 'Не удалось изменить статус');
+    } finally { setActionLoading(false); }
+  };
+
+  const hasRole = (role) => user?.roles?.some(r => r.oid === role.oid);
+
+  const toggleRole = async (role) => {
+    if (actionLoading) return;
+    const isAssigned = hasRole(role);
+    setActionLoading(true);
+    
+    try {
+      // 🔹 POST/DELETE roles с префиксами для user и role
+      const roleIdentifier = role.oid ? `oid_${role.oid}` : `name_${role.name}`;
+      const url = `/v1/users/${userIdentifier}/roles/${roleIdentifier}`;
+      
+      if (isAssigned) await authApi.delete(url);
+      else await authApi.post(url);
+      
+      await fetchData();
+    } catch (e) {
+      console.error('Role toggle error:', e);
+      Alert.alert('Ошибка', e.response?.data?.detail || 'Не удалось изменить роли');
+    } finally { setActionLoading(false); }
+  };
+
+  if (loading || !user) return <View style={styles.center}><ActivityIndicator size="large" color="#2563eb" /></View>;
+
+  return (
+    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}><Ionicons name="arrow-back" size={24} color="#0f172a" /></TouchableOpacity>
+        <Text style={styles.title}>Управление</Text>
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.avatarRow}>
+          <View style={styles.avatarLarge}><Text style={styles.avatarText}>{user.email?.[0]?.toUpperCase()}</Text></View>
+          <View style={styles.infoRow}>
+            <Text style={styles.email}>{user.email}</Text>
+            <Text style={styles.oid}>ID: {user.oid}</Text>
+          </View>
+        </View>
+        
+        <View style={styles.divider} />
+        
+        <View style={styles.switchRow}>
+          <Text style={styles.switchLabel}>Статус аккаунта</Text>
+          <View style={styles.switchContainer}>
+            <Text style={[styles.statusText, user.is_active ? styles.textActive : styles.textInactive]}>
+              {user.is_active ? 'Активен' : 'Заблокирован'}
+            </Text>
+            <Switch 
+              value={user.is_active} 
+              onValueChange={toggleStatus} 
+              disabled={actionLoading}
+              trackColor={{ false: '#fee2e2', true: '#86efac' }}
+              thumbColor={user.is_active ? '#166534' : '#f4f4f5'}
+            />
+          </View>
+        </View>
+      </View>
+
+      <Text style={styles.sectionTitle}>Роли ({user.roles?.length || 0} назначено)</Text>
+      <View style={styles.card}>
+        {allRoles.length === 0 ? (
+          <Text style={styles.empty}>Нет доступных ролей в системе</Text>
+        ) : (
+          allRoles.map(role => {
+            const isEnabled = hasRole(role);
+            return (
+              <TouchableOpacity
+                key={role.oid}
+                style={[styles.roleItem, isEnabled && styles.roleItemActive]}
+                onPress={() => toggleRole(role)}
+                disabled={actionLoading}
+                activeOpacity={0.7}
+              >
+                <View style={styles.roleInfo}>
+                  <Text style={[styles.roleName, isEnabled && styles.roleNameActive]}>{role.name}</Text>
+                  <Text style={styles.roleDesc}>{role.description}</Text>
+                </View>
+                <View style={styles.checkboxContainer}>
+                  <View style={[styles.checkbox, isEnabled && styles.checkboxChecked]}>
+                    {isEnabled && <Ionicons name="checkmark" size={14} color="#fff" />}
+                  </View>
+                </View>
+              </TouchableOpacity>
+            );
+          })
+        )}
+      </View>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flexGrow: 1, backgroundColor: '#f8fafc', padding: 20, paddingBottom: 40 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc' },
+  header: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  backBtn: { padding: 8, marginRight: 12, borderRadius: 8, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0' },
+  title: { fontSize: 22, fontWeight: '700', color: '#0f172a' },
+  card: { backgroundColor: '#fff', padding: 16, borderRadius: 16, marginBottom: 16, borderWidth: 1, borderColor: '#e2e8f0' },
+  avatarRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
+  avatarLarge: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#eff6ff', justifyContent: 'center', alignItems: 'center', marginRight: 16 },
+  avatarText: { fontSize: 24, fontWeight: '700', color: '#2563eb' },
+  email: { fontSize: 16, fontWeight: '600', color: '#0f172a' },
+  oid: { fontSize: 12, color: '#94a3b8', fontFamily: 'monospace', marginTop: 4 },
+  divider: { height: 1, backgroundColor: '#f1f5f9', marginVertical: 16 },
+  switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  switchLabel: { fontSize: 15, fontWeight: '500', color: '#475569' },
+  switchContainer: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  statusText: { fontSize: 14, fontWeight: '600' },
+  textActive: { color: '#166534' },
+  textInactive: { color: '#dc2626' },
+  sectionTitle: { fontSize: 16, fontWeight: '600', color: '#334155', marginBottom: 12, marginLeft: 4 },
+  roleItem: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 10, backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 8 },
+  roleItemActive: { backgroundColor: '#eff6ff', borderColor: '#bfdbfe' },
+  roleInfo: { flex: 1, marginRight: 12 },
+  roleName: { fontSize: 14, fontWeight: '600', color: '#475569' },
+  roleNameActive: { color: '#1e40af' },
+  roleDesc: { fontSize: 12, color: '#94a3b8', marginTop: 2 },
+  checkboxContainer: { width: 20, height: 20, justifyContent: 'center', alignItems: 'center' },
+  checkbox: { width: 18, height: 18, borderRadius: 5, borderWidth: 2, borderColor: '#cbd5e1', justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' },
+  checkboxChecked: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
+  empty: { textAlign: 'center', color: '#94a3b8', padding: 20 }
+});
+=== Файл: MobileApp/src/screens/AdminPermissionsScreen.js ===
+
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Alert, ActivityIndicator, Platform } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { authApi } from '../config/api';
+import { AUTH_SERVICE_URL } from '../config/constants';
+import { storage } from '../utils/storage';
+
+export default function AdminPermissionsScreen({ navigation }) {
+  const [permissions, setPermissions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newPermCode, setNewPermCode] = useState('');
+  const [newPermDesc, setNewPermDesc] = useState('');
+
+  const fetchPermissions = async () => {
+    setLoading(true);
+    try {
+      const { data } = await authApi.get('/v1/permissions', { params: { limit: 50 } });
+      setPermissions(Array.isArray(data) ? data : (data.permissions || data.data?.permissions || []));
+    } catch (e) {
+      Alert.alert('Ошибка', e.response?.data?.detail || 'Не удалось загрузить разрешения');
+    } finally { setLoading(false); }
+  };
+
+  useEffect(() => { fetchPermissions(); }, []);
+
+  const handleCreate = async () => {
+    if (!newPermCode.trim()) return Alert.alert('Ошибка', 'Введите код разрешения');
+    try {
+      await authApi.post('/v1/permission/create', { code: newPermCode, description: newPermDesc });
+      setShowCreateModal(false); setNewPermCode(''); setNewPermDesc('');
+      fetchPermissions();
+      Alert.alert('Успех', 'Разрешение создано');
+    } catch (e) {
+      Alert.alert('Ошибка', e.response?.data?.detail || 'Не удалось создать');
+    }
+  };
+
+  const getPermIdentifier = (perm) => perm.oid ? `oid_${perm.oid}` : `code_${perm.code}`;
+
+  const handleDelete = async (perm) => {
+    const identifier = getPermIdentifier(perm);
+    
+    console.log('🗑️ [DELETE] Permission:', perm.code, '| ID:', identifier);
+    
+    // 🔹 Кроссплатформенное подтверждение
+    let confirmed = false;
+    
+    if (Platform.OS === 'web') {
+      // Web: используем window.confirm
+      confirmed = window.confirm(`Удалить разрешение "${perm.code}"?\n\nЭто действие необратимо.`);
+    } else {
+      // Mobile: используем Alert.alert с Promise
+      confirmed = await new Promise((resolve) => {
+        Alert.alert(
+          'Удаление разрешения',
+          `Удалить ${perm.code}?`,
+          [
+            { text: 'Отмена', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Удалить', style: 'destructive', onPress: () => resolve(true) }
+          ]
+        );
+      });
+    }
+    
+    // Если пользователь отменил
+    if (!confirmed) {
+      console.log('⛔ [DELETE] Cancelled by user');
+      return;
+    }
+    
+    console.log('✅ [DELETE] Confirmed. Starting deletion...');
+    
+    try {
+      // 1️⃣ Пробуем через axios
+      console.log(' Sending DELETE via axios...');
+      await authApi.delete(`/v1/permissions/${identifier}`);
+      console.log('✅ Axios DELETE successful');
+      
+      fetchPermissions();
+      Alert.alert('Успех', 'Разрешение удалено');
+    } catch (axiosErr) {
+      console.error('❌ Axios DELETE failed:', {
+        status: axiosErr.response?.status,
+        statusText: axiosErr.response?.statusText,
+        data: axiosErr.response?.data,
+        message: axiosErr.message
+      });
+      
+      // 2️⃣ Fallback на fetch
+      try {
+        console.log('🔄 Retrying with raw fetch...');
+        const token = await storage.getItem('access_token');
+        const url = `${AUTH_SERVICE_URL}/v1/permissions/${identifier}`;
+        
+        console.log('📍 Fetch URL:', url);
+        console.log('🔑 Token:', token ? `${token.substring(0, 20)}...` : 'null');
+        
+        const res = await fetch(url, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          }
+        });
+        
+        console.log('📥 Fetch response status:', res.status);
+        
+        if (res.ok) {
+          console.log('✅ Fetch DELETE successful');
+          fetchPermissions();
+          Alert.alert('Успех', 'Разрешение удалено');
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          console.error('❌ Fetch DELETE failed:', res.status, errData);
+          Alert.alert(`Ошибка ${res.status}`, errData.detail || 'Не удалось удалить разрешение');
+        }
+      } catch (fetchErr) {
+        console.error('💥 Fetch also failed:', fetchErr);
+        Alert.alert('Ошибка сети', fetchErr.message);
+      }
+    }
+  };
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}><Ionicons name="arrow-back" size={24} color="#0f172a" /></TouchableOpacity>
+        <Text style={styles.title}>Разрешения</Text>
+        <TouchableOpacity onPress={() => setShowCreateModal(!showCreateModal)} style={styles.addButton}>
+          <Ionicons name="add" size={24} color="#fff" />
+        </TouchableOpacity>
+      </View>
+
+      {showCreateModal && (
+        <View style={styles.createForm}>
+          <TextInput style={styles.input} placeholder="Код (напр. users.edit)" value={newPermCode} onChangeText={setNewPermCode} />
+          <TextInput style={styles.input} placeholder="Описание" value={newPermDesc} onChangeText={setNewPermDesc} />
+          <TouchableOpacity style={styles.submitBtn} onPress={handleCreate}><Text style={styles.submitText}>Создать</Text></TouchableOpacity>
+        </View>
+      )}
+
+      {loading ? <ActivityIndicator size="large" color="#2563eb" style={{ marginTop: 20 }} /> : (
+        <ScrollView contentContainerStyle={styles.list}>
+          {permissions.length === 0 ? <Text style={styles.empty}>Нет разрешений</Text> : (
+            permissions.map(perm => (
+              <View key={perm.oid || perm.code} style={styles.card}>
+                <View style={styles.cardHeader}>
+                  <Text style={styles.permCode}>{perm.code}</Text>
+                  <TouchableOpacity onPress={() => handleDelete(perm)}>
+                    <Ionicons name="trash-outline" size={20} color="#ef4444" />
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.permDesc}>{perm.description}</Text>
+              </View>
+            ))
+          )}
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f8fafc', padding: 20 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
+  backBtn: { padding: 8, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' },
+  title: { fontSize: 20, fontWeight: '700', color: '#0f172a' },
+  addButton: { backgroundColor: '#f59e0b', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
+  createForm: { backgroundColor: '#fff', padding: 16, borderRadius: 12, marginBottom: 20, borderWidth: 1, borderColor: '#e2e8f0' },
+  input: { backgroundColor: '#f8fafc', padding: 12, borderRadius: 8, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0' },
+  submitBtn: { backgroundColor: '#10b981', padding: 12, borderRadius: 8, alignItems: 'center' },
+  submitText: { color: '#fff', fontWeight: '600' },
+  list: { paddingBottom: 40 },
+  card: { backgroundColor: '#fff', padding: 16, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0' },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  permCode: { fontSize: 16, fontWeight: '600', color: '#b45309', fontFamily: 'monospace' },
+  permDesc: { fontSize: 13, color: '#64748b' },
+  empty: { textAlign: 'center', color: '#94a3b8', marginTop: 40 }
+});
+=== Файл: MobileApp/src/screens/CreateDefectScreen.js ===
+
+import React from 'react';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+
+export default function CreateDefectScreen({ navigation }) {
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Создание дефекта</Text>
+      <Text style={styles.subtitle}>Экран в разработке 🚧</Text>
+      <TouchableOpacity style={styles.button} onPress={() => navigation.goBack()}>
+        <Text style={styles.buttonText}>Назад</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 24, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' },
+  title: { fontSize: 22, fontWeight: '700', marginBottom: 12 },
+  subtitle: { fontSize: 14, color: '#64748b', marginBottom: 30 },
+  button: { backgroundColor: '#2563eb', padding: 14, borderRadius: 10, width: '100%', alignItems: 'center' },
+  buttonText: { color: '#fff', fontWeight: '600' }
+});
+=== Файл: MobileApp/src/screens/AdminRolesScreen.js ===
+
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Alert, ActivityIndicator } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { authApi } from '../config/api';
+
+const getRoleIdentifier = (role) => role.oid ? `oid_${role.oid}` : `name_${role.name}`;
+
+export default function AdminRolesScreen({ navigation }) {
+  const [roles, setRoles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newRoleName, setNewRoleName] = useState('');
+  const [newRoleDesc, setNewRoleDesc] = useState('');
+
+  const fetchRoles = async () => {
+    setLoading(true);
+    try {
+      const { data } = await authApi.get('/v1/roles', { params: { limit: 50 } });
+      setRoles(Array.isArray(data) ? data : (data.roles || data.data?.roles || []));
+    } catch (e) {
+      Alert.alert('Ошибка', e.response?.data?.detail || 'Не удалось загрузить роли');
+    } finally { setLoading(false); }
+  };
+
+  useEffect(() => { fetchRoles(); }, []);
+
+  const handleCreate = async () => {
+    if (!newRoleName.trim()) return Alert.alert('Ошибка', 'Введите имя роли');
+    try {
+      await authApi.post('/v1/roles/create', { name: newRoleName, description: newRoleDesc });
+      setShowCreateModal(false); setNewRoleName(''); setNewRoleDesc('');
+      fetchRoles();
+      Alert.alert('Успех', 'Роль создана');
+    } catch (e) {
+      Alert.alert('Ошибка', e.response?.data?.detail || 'Не удалось создать');
+    }
+  };
+
+  const handleDelete = async (role) => {
+    const identifier = getRoleIdentifier(role);
+    Alert.alert('Удаление роли', `Удалить ${role.name}?`, [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: async () => {
+          try {
+            await authApi.delete(`/v1/roles/${encodeURIComponent(identifier)}`);
+            fetchRoles();
+            Alert.alert('Успех', 'Роль удалена');
+          } catch (e) {
+            Alert.alert('Ошибка', e.response?.data?.detail || 'Не удалось удалить');
+          }
+        }
+      }
+    ]);
+  };
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}><Ionicons name="arrow-back" size={24} color="#0f172a" /></TouchableOpacity>
+        <Text style={styles.title}>Управление ролями</Text>
+        <TouchableOpacity onPress={() => setShowCreateModal(!showCreateModal)} style={styles.addButton}>
+          <Ionicons name="add" size={24} color="#fff" />
+        </TouchableOpacity>
+      </View>
+
+      {showCreateModal && (
+        <View style={styles.createForm}>
+          <TextInput style={styles.input} placeholder="Имя роли" value={newRoleName} onChangeText={setNewRoleName} />
+          <TextInput style={styles.input} placeholder="Описание" value={newRoleDesc} onChangeText={setNewRoleDesc} />
+          <TouchableOpacity style={styles.submitBtn} onPress={handleCreate}><Text style={styles.submitText}>Создать</Text></TouchableOpacity>
+        </View>
+      )}
+
+      {loading ? <ActivityIndicator size="large" color="#2563eb" style={{ marginTop: 20 }} /> : (
+        <ScrollView contentContainerStyle={styles.list}>
+          {roles.length === 0 ? <Text style={styles.empty}>Нет ролей</Text> : (
+            roles.map(role => (
+              <TouchableOpacity key={role.oid || role.name} style={styles.card} onPress={() => navigation.navigate('RoleDetail', { roleIdentifier: getRoleIdentifier(role) })}>
+                <View style={styles.cardHeader}>
+                  <Text style={styles.roleName}>{role.name}</Text>
+                  <TouchableOpacity onPress={(e) => { e.stopPropagation(); handleDelete(role); }}>
+                    <Ionicons name="trash-outline" size={20} color="#ef4444" />
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.roleDesc}>{role.description}</Text>
+              </TouchableOpacity>
+            ))
+          )}
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f8fafc', padding: 20 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
+  backBtn: { padding: 8, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' },
+  title: { fontSize: 20, fontWeight: '700', color: '#0f172a' },
+  addButton: { backgroundColor: '#2563eb', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
+  createForm: { backgroundColor: '#fff', padding: 16, borderRadius: 12, marginBottom: 20, borderWidth: 1, borderColor: '#e2e8f0' },
+  input: { backgroundColor: '#f8fafc', padding: 12, borderRadius: 8, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0' },
+  submitBtn: { backgroundColor: '#10b981', padding: 12, borderRadius: 8, alignItems: 'center' },
+  submitText: { color: '#fff', fontWeight: '600' },
+  list: { paddingBottom: 40 },
+  card: { backgroundColor: '#fff', padding: 16, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0' },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, // Убрал gap и marginBottom
+  roleName: { fontSize: 16, fontWeight: '600', color: '#0f172a' },
+  roleDesc: { fontSize: 13, color: '#64748b', marginTop: 4 },
+  empty: { textAlign: 'center', color: '#94a3b8', marginTop: 40 }
+});
+=== Файл: MobileApp/src/screens/ModeratorDefectsScreen.js ===
+
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator, TextInput, Image } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { getPendingDefects, moderateDefect, DEFECT_TYPE_LABELS, SEVERITY_LABELS } from '../services/defectsService';
+import { useAuth } from '../context/AuthContext';
+
+export default function ModeratorDefectsScreen({ navigation, route }) {
+  const { isModerator } = useAuth();
+  const [pendingDefects, setPendingDefects] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedDefect, setSelectedDefect] = useState(null);
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [moderating, setModerating] = useState(false);
+
+  const fetchPending = async () => {
+    if (!isModerator) return;
+    setLoading(true);
+    try {
+      const data = await getPendingDefects({ limit: 50 });
+      setPendingDefects(data);
+    } catch (e) { Alert.alert('Ошибка', 'Не удалось загрузить дефекты'); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { if (isModerator) fetchPending(); }, [isModerator]);
+
+  const handleModerate = async (defectId, status) => {
+    if (status === 'rejected' && !rejectionReason.trim()) return Alert.alert('Требуется причина', 'Укажите причину отклонения');
+    setModerating(true);
+    try {
+      await moderateDefect(defectId, { status, rejection_reason: status === 'rejected' ? rejectionReason.trim() : undefined });
+      Alert.alert('Готово', `Дефект ${status === 'approved' ? 'подтверждён' : 'отклонён'}`, [{ text: 'OK', onPress: () => { setSelectedDefect(null); setRejectionReason(''); fetchPending(); }}]);
+    } catch (e) { Alert.alert('Ошибка', e.response?.data?.detail || 'Не удалось модерировать'); }
+    finally { setModerating(false); }
+  };
+
+  if (!isModerator) return <View style={styles.center}><Text style={styles.error}>🚫 Только для модераторов</Text><TouchableOpacity style={styles.button} onPress={() => navigation.goBack()}><Text style={styles.buttonText}>Назад</Text></TouchableOpacity></View>;
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => { setSelectedDefect(null); navigation.goBack(); }} style={styles.backBtn}><Ionicons name="arrow-back" size={24} color="#0f172a" /></TouchableOpacity>
+        <Text style={styles.title}>{selectedDefect ? 'Модерация' : 'Дефекты на проверке'}</Text>
+      </View>
+
+      {selectedDefect ? (
+        <ScrollView style={styles.detailScroll}>
+          <View style={styles.detailCard}>
+            <Text style={styles.detailType}>{DEFECT_TYPE_LABELS[selectedDefect.defect_type] || selectedDefect.defect_type}</Text>
+            <Text style={styles.detailDesc}>{selectedDefect.description || 'Нет описания'}</Text>
+            <View style={styles.metaRow}><Text style={styles.metaLabel}>Серьёзность:</Text><Text style={[styles.metaValue, { color: selectedDefect.severity === 'critical' ? '#dc2626' : '#475569' }]}>{SEVERITY_LABELS[selectedDefect.severity]}</Text></View>
+            <View style={styles.metaRow}><Text style={styles.metaLabel}>Дорога:</Text><Text style={styles.metaValue}>{selectedDefect.road_info?.road_name || 'Не определена'}</Text></View>
+            {selectedDefect.photos?.length > 0 && <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.photosRow}>{selectedDefect.photos.map((uri, i) => (<View key={i} style={styles.photoItem}><Image source={{ uri }} style={styles.photoImage} /></View>))}</ScrollView>}
+          </View>
+          <View style={styles.moderateForm}>
+            <Text style={styles.label}>Причина отклонения (если нужно)</Text>
+            <TextInput style={styles.input} placeholder="Например: недостаточно информации..." value={rejectionReason} onChangeText={setRejectionReason} multiline numberOfLines={3} />
+            <View style={styles.actionsRow}>
+              <TouchableOpacity style={[styles.actionBtn, styles.rejectBtn]} onPress={() => handleModerate(selectedDefect.id, 'rejected')} disabled={moderating}><Ionicons name="close-circle" size={20} color="#fff" /><Text style={styles.actionText}>Отклонить</Text></TouchableOpacity>
+              <TouchableOpacity style={[styles.actionBtn, styles.approveBtn]} onPress={() => handleModerate(selectedDefect.id, 'approved')} disabled={moderating}>{moderating ? <ActivityIndicator color="#fff" /> : <><Ionicons name="checkmark-circle" size={20} color="#fff" /><Text style={styles.actionText}>Подтвердить</Text></>}</TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+      ) : (
+        loading ? <ActivityIndicator size="large" color="#2563eb" style={{ marginTop: 40 }} /> :
+        pendingDefects.length === 0 ? <View style={styles.emptyState}><Ionicons name="checkmark-done-circle-outline" size={48} color="#22c55e" /><Text style={styles.emptyText}>Нет дефектов на модерацию 🎉</Text></View> :
+        <ScrollView>{pendingDefects.map(defect => (
+          <TouchableOpacity key={defect.id} style={styles.defectCard} onPress={() => setSelectedDefect(defect)}>
+            <View style={styles.defectHeader}><Text style={styles.defectType}>{DEFECT_TYPE_LABELS[defect.defect_type] || defect.defect_type}</Text><Text style={[styles.severityBadge, { backgroundColor: defect.severity === 'critical' ? '#fef2f2' : defect.severity === 'high' ? '#fff7ed' : defect.severity === 'medium' ? '#fffbeb' : '#f0fdf4' }]}>{SEVERITY_LABELS[defect.severity]}</Text></View>
+            <Text style={styles.defectDesc} numberOfLines={2}>{defect.description || 'Нет описания'}</Text>
+            <View style={styles.defectMeta}><Text style={styles.metaText}>📍 {defect.road_info?.road_name || 'Неизвестно'}</Text><Text style={styles.metaText}>🕐 {new Date(defect.created_at).toLocaleDateString('ru-RU')}</Text></View>
+            {defect.photos?.length > 0 && <View style={styles.photosPreview}>{defect.photos.slice(0, 3).map((uri, i) => (<Image key={i} source={{ uri }} style={styles.previewPhoto} />))}{defect.photos.length > 3 && <View style={styles.morePhotos}><Text style={styles.moreText}>+{defect.photos.length - 3}</Text></View>}</View>}
+          </TouchableOpacity>
+        ))}</ScrollView>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f8fafc' }, center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc' },
+  header: { flexDirection: 'row', alignItems: 'center', padding: 20, paddingBottom: 10, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
+  backBtn: { padding: 8, marginRight: 12 }, title: { fontSize: 20, fontWeight: '700', color: '#0f172a' },
+  error: { fontSize: 16, color: '#dc2626', marginBottom: 20 }, button: { backgroundColor: '#2563eb', padding: 12, borderRadius: 10 }, buttonText: { color: '#fff', fontWeight: '600' },
+  detailScroll: { flex: 1 }, detailCard: { backgroundColor: '#fff', padding: 16, margin: 16, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0' },
+  detailType: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 8 }, detailDesc: { fontSize: 14, color: '#475569', marginBottom: 16, lineHeight: 20 },
+  metaRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }, metaLabel: { fontSize: 13, color: '#64748b' }, metaValue: { fontSize: 13, fontWeight: '500', color: '#0f172a' },
+  photosRow: { flexDirection: 'row', gap: 8, marginTop: 12 }, photoItem: { width: 100, height: 100, borderRadius: 8, overflow: 'hidden' }, photoImage: { width: '100%', height: '100%' },
+  moderateForm: { backgroundColor: '#fff', padding: 16, margin: 16, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', marginTop: 8 },
+  label: { fontSize: 13, fontWeight: '600', color: '#475569', marginBottom: 8 }, input: { backgroundColor: '#f8fafc', padding: 12, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', minHeight: 80, textAlignVertical: 'top', marginBottom: 16 },
+  actionsRow: { flexDirection: 'row', gap: 12 }, actionBtn: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', padding: 14, borderRadius: 10, gap: 6 },
+  rejectBtn: { backgroundColor: '#ef4444' }, approveBtn: { backgroundColor: '#22c55e' }, actionText: { color: '#fff', fontWeight: '600' },
+  defectCard: { backgroundColor: '#fff', padding: 16, marginHorizontal: 16, marginBottom: 12, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0' },
+  defectHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }, defectType: { fontSize: 15, fontWeight: '600', color: '#0f172a' },
+  severityBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, fontSize: 11, fontWeight: '600' }, defectDesc: { fontSize: 13, color: '#475569', marginBottom: 12 },
+  defectMeta: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 }, metaText: { fontSize: 12, color: '#64748b' },
+  photosPreview: { flexDirection: 'row', gap: 4 }, previewPhoto: { width: 50, height: 50, borderRadius: 6 }, morePhotos: { width: 50, height: 50, borderRadius: 6, backgroundColor: '#f1f5f9', justifyContent: 'center', alignItems: 'center' }, moreText: { fontSize: 12, fontWeight: '600', color: '#64748b' },
+  emptyState: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 }, emptyText: { marginTop: 16, fontSize: 15, color: '#64748b', textAlign: 'center' }
+});
+=== Файл: MobileApp/src/screens/RegisterModal.js ===
+
+import React, { useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../context/AuthContext';
+
+export default function RegisterModal({ navigation }) {
+  const { register, loading, apiError, successMessage } = useAuth();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [passwordConfirm, setPasswordConfirm] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
+  const handleRegister = async () => {
+    if (!email.trim() || !password.trim() || !passwordConfirm.trim()) return;
+    try {
+      await register({ email, password, password_confirm: passwordConfirm });
+      navigation.goBack();
+    } catch {}
+  };
+
+  return (
+    <View style={styles.backdrop}>
+      <TouchableOpacity style={styles.backdropTouchable} activeOpacity={1} onPress={() => navigation.goBack()} />
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.container}>
+        <View style={styles.modalCard}>
+          <View style={styles.header}>
+            <Text style={styles.title}>Регистрация</Text>
+            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.closeBtn}><Ionicons name="close" size={24} color="#64748b" /></TouchableOpacity>
+          </View>
+          {successMessage && <View style={styles.successBox}><Text style={styles.successText}>{successMessage}</Text></View>}
+          {apiError && <View style={styles.errorBox}><Text style={styles.errorText}>{apiError}</Text></View>}
+          <TextInput style={styles.input} placeholder="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+          <View style={styles.passwordWrapper}>
+            <TextInput style={styles.passwordInput} placeholder="Пароль" value={password} onChangeText={setPassword} secureTextEntry={!showPassword} autoCapitalize="none" />
+            <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeButton}><Ionicons name={showPassword ? 'eye-off' : 'eye'} size={22} color="#64748b" /></TouchableOpacity>
+          </View>
+          <TextInput style={styles.input} placeholder="Подтвердите пароль" value={passwordConfirm} onChangeText={setPasswordConfirm} secureTextEntry={!showPassword} autoCapitalize="none" />
+          <TouchableOpacity style={styles.button} onPress={handleRegister} disabled={loading}>
+            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Зарегистрироваться</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => navigation.replace('Login')} style={styles.linkContainer}><Text style={styles.linkText}>Уже есть аккаунт? Войти</Text></TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  backdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.4)', justifyContent: 'center', alignItems: 'center' },
+  backdropTouchable: { ...StyleSheet.absoluteFillObject },
+  container: { width: '90%', maxWidth: 480, paddingHorizontal: 16 },
+  modalCard: { backgroundColor: '#fff', borderRadius: 20, padding: 24, elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 10 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  title: { fontSize: 24, fontWeight: '700', color: '#0f172a' },
+  closeBtn: { padding: 4 },
+  input: { backgroundColor: '#f8fafc', padding: 14, borderRadius: 10, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0' },
+  passwordWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc', borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 12 },
+  passwordInput: { flex: 1, padding: 14 },
+  eyeButton: { padding: 12 },
+  successBox: { backgroundColor: '#f0fdf4', padding: 10, borderRadius: 8, marginBottom: 12, borderWidth: 1, borderColor: '#bbf7d0' },
+  successText: { color: '#166534', textAlign: 'center', fontSize: 13 },
+  errorBox: { backgroundColor: '#fef2f2', padding: 10, borderRadius: 8, marginBottom: 12, borderWidth: 1, borderColor: '#fecaca' },
+  errorText: { color: '#dc2626', textAlign: 'center', fontSize: 13 },
+  button: { backgroundColor: '#2563eb', padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 4 },
+  buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  linkContainer: { marginTop: 16, alignItems: 'center' },
+  linkText: { color: '#2563eb', fontSize: 14, fontWeight: '500' }
+});
+=== Файл: MobileApp/src/screens/RoleDetailScreen.js ===
+
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Switch } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { authApi } from '../config/api';
+
+export default function RoleDetailScreen({ route, navigation }) {
+  const { roleIdentifier } = route.params;
+  const [role, setRole] = useState(null);
+  const [allPermissions, setAllPermissions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  // Загрузка всех разрешений и данных роли
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      // Получаем все доступные разрешения
+      const permsResponse = await authApi.get('/v1/permissions', { params: { limit: 100 } });
+      const perms = Array.isArray(permsResponse.data) 
+        ? permsResponse.data 
+        : (permsResponse.data.permissions || permsResponse.data.data?.permissions || []);
+      
+      // Получаем роль с её разрешениями
+      const roleResponse = await authApi.get(`/v1/roles/${roleIdentifier}`, { 
+        params: { load_permissions: true } 
+      });
+      
+      setAllPermissions(perms);
+      setRole(roleResponse.data);
+    } catch (e) {
+      console.error('❌ Fetch error:', e.response?.data || e.message);
+      Alert.alert('Ошибка', 'Не удалось загрузить данные');
+    } finally { 
+      setLoading(false); 
+    }
+  };
+
+  useEffect(() => { fetchData(); }, []);
+
+  // Проверка, есть ли разрешение у роли
+  const hasPermission = (perm) => {
+    if (!role?.permissions) return false;
+    return role.permissions.some(p => p.oid === perm.oid || p.code === perm.code);
+  };
+
+  // Переключение разрешения (assign/revoke)
+  const togglePermission = async (perm) => {
+    if (actionLoading) return;
+    
+    const isAssigned = hasPermission(perm);
+    const permIdentifier = perm.oid ? `oid_${perm.oid}` : `code_${perm.code}`;
+    
+    console.log(`🔄 Toggle permission ${perm.code}: ${isAssigned ? 'REVOKE' : 'ASSIGN'}`);
+    
+    setActionLoading(true);
+    try {
+      if (isAssigned) {
+        // Отозвать разрешение
+        await authApi.delete(`/v1/roles/${roleIdentifier}/permissions/${permIdentifier}`);
+        console.log(`✅ Revoked ${perm.code}`);
+      } else {
+        // Назначить разрешение
+        await authApi.post(`/v1/roles/${roleIdentifier}/permissions/${permIdentifier}`);
+        console.log(`✅ Assigned ${perm.code}`);
+      }
+      
+      // Обновляем данные роли
+      await fetchData();
+    } catch (e) {
+      console.error('❌ Toggle failed:', e.response?.data || e.message);
+      Alert.alert(
+        'Ошибка', 
+        isAssigned 
+          ? `Не удалось отозвать разрешение ${perm.code}`
+          : `Не удалось назначить разрешение ${perm.code}`
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color="#2563eb" />
+        <Text style={styles.loadingText}>Загрузка...</Text>
+      </View>
+    );
+  }
+
+  if (!role) {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.errorText}>Не удалось загрузить роль</Text>
+        <TouchableOpacity style={styles.retryBtn} onPress={fetchData}>
+          <Text style={styles.retryText}>Повторить</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const assignedCount = role.permissions?.length || 0;
+  const totalCount = allPermissions.length;
+
+  return (
+    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <Ionicons name="arrow-back" size={24} color="#0f172a" />
+        </TouchableOpacity>
+        <Text style={styles.title}>{role.name}</Text>
+      </View>
+
+      {/* Описание роли */}
+      <View style={styles.card}>
+        <Text style={styles.label}>Описание</Text>
+        <Text style={styles.value}>{role.description || '-'}</Text>
+      </View>
+
+      {/* Статистика */}
+      <View style={styles.statsRow}>
+        <View style={styles.statBox}>
+          <Text style={styles.statNumber}>{assignedCount}</Text>
+          <Text style={styles.statLabel}>Назначено</Text>
+        </View>
+        <View style={styles.statBox}>
+          <Text style={styles.statNumber}>{totalCount}</Text>
+          <Text style={styles.statLabel}>Всего разрешений</Text>
+        </View>
+      </View>
+
+      {/* Список всех разрешений с чекбоксами */}
+      <View style={styles.card}>
+        <Text style={styles.label}>Разрешения</Text>
+        
+        {allPermissions.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Ionicons name="lock-closed-outline" size={32} color="#94a3b8" />
+            <Text style={styles.emptyText}>Нет доступных разрешений</Text>
+          </View>
+        ) : (
+          <View style={styles.permissionsList}>
+            {allPermissions.map(perm => {
+              const isEnabled = hasPermission(perm);
+              return (
+                <TouchableOpacity
+                  key={perm.oid || perm.code}
+                  style={[styles.permItem, isEnabled && styles.permItemActive]}
+                  onPress={() => togglePermission(perm)}
+                  disabled={actionLoading}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.permInfo}>
+                    <Text style={[styles.permCode, isEnabled && styles.permCodeActive]}>
+                      {perm.code}
+                    </Text>
+                    <Text style={styles.permDesc}>{perm.description}</Text>
+                  </View>
+                  
+                  <View style={styles.checkboxContainer}>
+                    <View style={[styles.checkbox, isEnabled && styles.checkboxChecked]}>
+                      {isEnabled && <Ionicons name="checkmark" size={16} color="#fff" />}
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
+      </View>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flexGrow: 1, backgroundColor: '#f8fafc', padding: 20, paddingBottom: 40 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc', padding: 20 },
+  loadingText: { marginTop: 12, fontSize: 15, color: '#64748b' },
+  errorText: { fontSize: 16, color: '#dc2626', textAlign: 'center', marginBottom: 20 },
+  retryBtn: { backgroundColor: '#2563eb', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10 },
+  retryText: { color: '#fff', fontWeight: '600', fontSize: 15 },
+  
+  header: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  backBtn: { padding: 8, marginRight: 12, borderRadius: 8, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0' },
+  title: { fontSize: 22, fontWeight: '700', color: '#0f172a', flex: 1 },
+  
+  card: { backgroundColor: '#fff', padding: 16, borderRadius: 16, marginBottom: 16, borderWidth: 1, borderColor: '#e2e8f0' },
+  label: { fontSize: 13, fontWeight: '600', color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
+  value: { fontSize: 15, color: '#0f172a' },
+  
+  statsRow: { flexDirection: 'row', gap: 12, marginBottom: 16 },
+  statBox: { flex: 1, backgroundColor: '#fff', padding: 16, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center' },
+  statNumber: { fontSize: 24, fontWeight: '700', color: '#2563eb' },
+  statLabel: { fontSize: 12, color: '#64748b', marginTop: 4 },
+  
+  permissionsList: { gap: 8 },
+  permItem: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    padding: 12, 
+    borderRadius: 10, 
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  permItemActive: { 
+    backgroundColor: '#eff6ff',
+    borderColor: '#bfdbfe',
+  },
+  permInfo: { flex: 1, marginRight: 12 },
+  permCode: { fontSize: 14, fontWeight: '600', color: '#475569', fontFamily: 'monospace', marginBottom: 2 },
+  permCodeActive: { color: '#1e40af' },
+  permDesc: { fontSize: 12, color: '#94a3b8' },
+  
+  checkboxContainer: { 
+    width: 24, 
+    height: 24, 
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#cbd5e1',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+  },
+  checkboxChecked: {
+    backgroundColor: '#2563eb',
+    borderColor: '#2563eb',
+  },
+  
+  emptyState: { 
+    alignItems: 'center', 
+    padding: 32,
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    borderColor: '#cbd5e1'
+  },
+  emptyText: { marginTop: 12, fontSize: 14, color: '#94a3b8', textAlign: 'center' }
+});
+=== Файл: MobileApp/src/screens/HomeScreen.js ===
+
+import React from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { useAuth } from '../context/AuthContext';
+import { Ionicons } from '@expo/vector-icons';
+
+export default function HomeScreen({ navigation }) {
+  const { isAuthenticated } = useAuth();
+
+  return (
+    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+      <View style={styles.header}>
+        <Text style={styles.title}>🛣️ RoadDefects</Text>
+        <Text style={styles.subtitle}>Мониторинг дорожных дефектов</Text>
+      </View>
+
+      <View style={styles.menuGrid}>
+        {/* 🔹 КНОПКА КАРТЫ */}
+        <TouchableOpacity 
+          style={styles.menuItem} 
+          onPress={() => navigation.navigate('Map')}
+        >
+          <Ionicons name="map-outline" size={28} color="#2563eb" />
+          <Text style={styles.menuText}>Карта дефектов</Text>
+        </TouchableOpacity>
+
+        {isAuthenticated && (
+          <TouchableOpacity style={styles.menuItem} onPress={() => navigation.navigate('Profile')}>
+            <Ionicons name="person-outline" size={28} color="#2563eb" />
+            <Text style={styles.menuText}>Мой профиль</Text>
+          </TouchableOpacity>
+        )}
+
+        {!isAuthenticated && (
+          <TouchableOpacity style={styles.menuItem} onPress={() => navigation.navigate('Login')}>
+            <Ionicons name="log-in-outline" size={28} color="#16a34a" />
+            <Text style={styles.menuText}>Войти / Регистрация</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      <View style={styles.placeholder}>
+        <Ionicons name="information-circle-outline" size={48} color="#94a3b8" />
+        <Text style={styles.placeholderText}>Используйте карту для просмотра дефектов</Text>
+      </View>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flexGrow: 1, backgroundColor: '#f8fafc', padding: 20 },
+  header: { marginBottom: 24 },
+  title: { fontSize: 28, fontWeight: '800', color: '#0f172a' },
+  subtitle: { fontSize: 15, color: '#64748b', marginTop: 4 },
+  menuGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 24 },
+  menuItem: { flex: 1, minWidth: '45%', backgroundColor: '#fff', padding: 16, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' },
+  menuText: { marginTop: 8, fontWeight: '600', color: '#334155' },
+  placeholder: { backgroundColor: '#f1f5f9', padding: 32, borderRadius: 16, alignItems: 'center', borderStyle: 'dashed', borderWidth: 2, borderColor: '#cbd5e1' },
+  placeholderText: { marginTop: 12, fontSize: 14, fontWeight: '600', color: '#475569', textAlign: 'center' }
+});

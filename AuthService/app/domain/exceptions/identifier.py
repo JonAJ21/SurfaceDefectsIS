@@ -9,5 +9,6 @@ class InvalidIdentifierException(DomainException):
     
     @property
     def message(self):
-        return f'Invalid identifier {self.identifier}'
+        #return f'Invalid identifier {self.identifier}'
+        return f'Неверный идентификатор {self.identifier}'
     

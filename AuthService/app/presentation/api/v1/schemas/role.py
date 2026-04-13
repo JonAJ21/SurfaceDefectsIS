@@ -76,4 +76,10 @@ class RoleUpdateResponseSchema(BaseModel):
         )
         
 class RoleDeleteResponseSchema(BaseModel):
-    message: str
+    message: str = "Role deleted"
+    
+class RoleAssignPermissionResponseSchema(BaseModel):
+    message: str = "Permission assigned"
+    
+class RoleRevokePermissionResponseSchema(BaseModel):
+    message: str = "Permission revoked"

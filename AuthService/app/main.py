@@ -3,6 +3,7 @@ from typing import Any, Callable
 
 from redis.asyncio.client import Redis
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from infrastructure.database import redis
 from core.config.settings import settings
@@ -46,5 +47,13 @@ def create_app() -> FastAPI:
     app.include_router(user_router)
     app.include_router(role_router)
     app.include_router(permission_router)
+    
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:19006", "http://localhost:8081", "exp://"], # Expo DevTools + Web
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     
     return app

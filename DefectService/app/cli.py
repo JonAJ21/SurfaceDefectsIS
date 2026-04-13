@@ -57,7 +57,7 @@ async def download_osm(region: str, output_dir: str):
     return str(output_file)
 
 @cli.command()
-def import_osm(
+def import_osm_to_postgis(
     pbf_file: Path = typer.Argument(
         settings.pbf_file_path,
         help="Путь к .osm.pbf файлу",
@@ -142,6 +142,10 @@ def import_osm(
     except Exception as e:
         typer.echo(f"Критическая ошибка: {e}", err=True)
         raise typer.Exit(1)
+
+# @cli.command()
+# def import_osm_tiles():
+#     print("Migrate")
 
 
 @cli.command()
