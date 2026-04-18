@@ -1,4 +1,4 @@
-directory="MobileApp/src/screens"
+directory="MobileApp/src/"
 
 if [ -d "$directory" ]; then
     echo "Содержимое директории $directory:"

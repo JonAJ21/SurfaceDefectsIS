@@ -14,6 +14,8 @@ import RegisterModal from '../screens/RegisterModal';
 
 // ===== СОЗДАНИЕ ДЕФЕКТА =====
 import CreateDefectScreen from '../screens/CreateDefectScreen';
+import MyDefectsScreen from '../screens/MyDefectsScreen';
+import EditDefectScreen from '../screens/EditDefectScreen';
 
 // ===== АДМИН ПАНЕЛЬ =====
 import AdminDashboardScreen from '../screens/AdminDashboardScreen';
@@ -88,6 +90,25 @@ export default function AppNavigator() {
             cardStyle: { backgroundColor: 'transparent' }
           }} 
         />
+
+        <Stack.Screen 
+          name="MyDefects" 
+          component={MyDefectsScreen} 
+          options={{ 
+            headerShown: false,
+            animation: 'slide_from_right'
+          }} 
+        />
+
+        <Stack.Screen 
+          name="EditDefect" 
+          component={EditDefectScreen} 
+          options={{ 
+            headerShown: false,
+            animation: 'slide_from_right'
+          }} 
+        />
+
         
         {/* ===== АДМИН ПАНЕЛЬ ===== */}
         <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />

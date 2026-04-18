@@ -53,11 +53,11 @@ class DefectCreateUseCase(BaseDefectCreateUseCase):
                 if distance <= distance_tolerance_meters:
                     # Найден дубликат!
                     return True
-            else:
-                # Для линейных - проверяем тип
-                if defect.geometry_type == GeometryType.LINESTRING:
-                    # Можно добавить проверку пересечения
-                    return True
+            # else:
+            #     # Для линейных - проверяем тип
+            #     if defect.geometry_type == GeometryType.LINESTRING:
+            #         # Можно добавить проверку пересечения
+            #         return True
         
         return False
     

@@ -43,20 +43,26 @@ export function AuthProvider({ children }) {
       setIsAuthenticated(true);
       return userData;
     } catch (err) {
+      // Если 401, пробуем обновить токен
       if (err.response?.status === 401) {
         try {
           const refreshToken = await storage.getItem('refresh_token');
           if (refreshToken) {
-            const formData = new URLSearchParams();
+            const formData = new FormData();
             formData.append('refresh_token', refreshToken);
+            
             const { data } = await rawApi.post('/v1/users/me/refresh', formData, {
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+              headers: { 'Content-Type': 'multipart/form-data' }
             });
+            
             await storage.setItem('access_token', data.access_token);
             if (data.refresh_token) await storage.setItem('refresh_token', data.refresh_token);
+            
+            // Повторяем запрос профиля с новым токеном
             return fetchUserProfile();
           }
         } catch (refreshErr) {
+          console.error('Refresh failed:', refreshErr);
           await storage.removeItem('access_token');
           await storage.removeItem('refresh_token');
         }

@@ -1,7 +1,9 @@
+// MobileApp/src/config/api.js
 import axios from 'axios';
 import { storage } from '../utils/storage';
 import { AUTH_SERVICE_URL, DEFECTS_SERVICE_URL } from './constants';
 import { logger } from '../utils/logger';
+import { Platform } from 'react-native';
 
 let isRefreshing = false;
 let failedQueue = [];
@@ -26,7 +28,6 @@ export function createApiInstance(baseURL) {
     const token = await storage.getItem('access_token');
     if (token) config.headers.Authorization = `Bearer ${token}`;
     
-    // 🔹 Не переопределяем Content-Type, если отправляем FormData (axios сам поставит boundary)
     if (!(config.data instanceof FormData)) {
       config.headers['Content-Type'] = 'application/json';
     }
@@ -43,10 +44,17 @@ export function createApiInstance(baseURL) {
                              originalRequest?.url?.includes('/v1/users/register') ||
                              originalRequest?.url?.includes('/v1/users/me/refresh');
 
+      // Если 401 и не auth эндпоинт и не повторный запрос
       if (error.response?.status === 401 && originalRequest && !originalRequest._retry && !isAuthEndpoint) {
         if (isRefreshing) {
-          return new Promise((resolve, reject) => failedQueue.push({ resolve, reject }))
-            .then(token => { originalRequest.headers.Authorization = `Bearer ${token}`; return api(originalRequest); });
+          return new Promise((resolve, reject) => {
+            failedQueue.push({ resolve, reject });
+          }).then(token => {
+            originalRequest.headers.Authorization = `Bearer ${token}`;
+            return api(originalRequest);
+          }).catch(err => {
+            return Promise.reject(err);
+          });
         }
 
         originalRequest._retry = true;
@@ -54,29 +62,52 @@ export function createApiInstance(baseURL) {
 
         try {
           const refreshToken = await storage.getItem('refresh_token');
-          if (!refreshToken) throw new Error('No refresh token');
+          
+          if (!refreshToken) {
+            throw new Error('No refresh token');
+          }
 
-          const formData = new URLSearchParams();
+          // Используем FormData для refresh запроса
+          const formData = new FormData();
           formData.append('refresh_token', refreshToken);
-
+          
+          // Важно: для refresh используем rawApi, чтобы избежать цикла
           const { data } = await rawApi.post('/v1/users/me/refresh', formData, {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+            headers: { 
+              'Content-Type': 'multipart/form-data',
+            }
           });
 
-          await storage.setItem('access_token', data.access_token);
-          if (data.refresh_token) await storage.setItem('refresh_token', data.refresh_token);
+          if (data.access_token) {
+            await storage.setItem('access_token', data.access_token);
+          }
+          
+          if (data.refresh_token) {
+            await storage.setItem('refresh_token', data.refresh_token);
+          }
 
           processQueue(null, data.access_token);
           originalRequest.headers.Authorization = `Bearer ${data.access_token}`;
+          
           return api(originalRequest);
         } catch (refreshError) {
           processQueue(refreshError, null);
+          
+          // Очищаем токены
           await storage.removeItem('access_token');
           await storage.removeItem('refresh_token');
-          if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('auth:session_expired'));
+          
+          // Уведомляем приложение о необходимости перелогина
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('auth:session_expired'));
+          }
+          
           return Promise.reject(refreshError);
-        } finally { isRefreshing = false; }
+        } finally {
+          isRefreshing = false;
+        }
       }
+      
       return Promise.reject(error);
     }
   );
