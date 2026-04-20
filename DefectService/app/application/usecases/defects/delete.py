@@ -32,7 +32,7 @@ class DefectDeleteUseCase(BaseDefectDeleteUseCase):
                 )
             
             # Удаляем фото из MinIO
-            await uow.photos.delete_all(str(request.defect_id))
+            # await uow.photos.delete_all(str(request.defect_id))
             
             # Мягкое удаление дефекта
             result = await uow.defects.delete(request.defect_id)

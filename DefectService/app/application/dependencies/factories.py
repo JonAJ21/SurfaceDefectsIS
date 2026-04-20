@@ -15,7 +15,7 @@ from application.usecases.defects.get_pending import BaseDefectGetPendingUseCase
 from application.usecases.defects.moderate import BaseDefectModerateUseCase, DefectModerateUseCase
 from application.usecases.defects.update import BaseDefectUpdateUseCase, DefectUpdateUseCase
 from application.usecases.defects.get_nearby import BaseDefectGetNearbyUseCase, DefectGetNearbyUseCase
-from application.usecases.defects.get import BaseDefectGetUseCase, DefectGetUseCase
+from application.usecases.defects.get import BaseDefectGetUseCase, BaseDefectsGetUseCase, DefectGetUseCase, DefectsGetUseCase
 from application.usecases.defects.create import BaseDefectCreateUseCase, DefectCreateUseCase
 from application.dependencies.registrator import add_factory_to_mapper
 from infrastructure.services.road import OSMRoadSnappingService
@@ -40,6 +40,14 @@ def defect_create_usecase_factory(
     uow: BaseUnitOfWork = Depends(uow_factory)
 ) -> BaseDefectCreateUseCase:
     return DefectCreateUseCase(uow)
+
+@add_factory_to_mapper(BaseDefectsGetUseCase)
+@cache
+def defects_get_usecase_factory(
+    uow: BaseUnitOfWork = Depends(uow_factory)
+) -> BaseDefectsGetUseCase:
+    return DefectsGetUseCase(uow)
+
 
 @add_factory_to_mapper(BaseDefectGetUseCase)
 @cache

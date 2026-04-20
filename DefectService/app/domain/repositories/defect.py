@@ -16,6 +16,18 @@ class BaseDefectsRepository(ABC):
         ...
     
     @abstractmethod
+    async def get(
+        self,
+        offset: int = 0,
+        limit: int = 10,
+        defect_statuses: Optional[List[DefectStatus]] = None,
+        defect_types: Optional[List[DefectType]] = None,
+        min_severity: Optional[SeverityLevel] = None
+    ) -> List[RoadDefect]:
+        """Получить дефекты"""
+        ...
+    
+    @abstractmethod
     async def get_by_id(self, defect_id: UUID) -> Optional[RoadDefect]:
         """Получить по ID"""
         ...

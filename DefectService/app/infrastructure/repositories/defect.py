@@ -104,6 +104,33 @@ class SQLAlchemyDefectsRepository(BaseDefectsRepository):
         models = result.scalars().all()
         return [await self._to_entity(m) for m in models]
     
+    async def get(
+        self,
+        offset: int = 0,
+        limit: int = 10,
+        defect_statuses: List[DefectStatus] | None = None,
+        defect_types: List[DefectType] | None = None,
+        min_severity: SeverityLevel | None = None
+    ) -> List[RoadDefect]:
+        """Получить дефекты"""
+        stmt = select(RoadDefectModel)
+        
+        if defect_statuses:
+            stmt = stmt.where(RoadDefectModel.status.in_(defect_statuses))
+        
+        if defect_types:
+            stmt = stmt.where(RoadDefectModel.defect_type.in_(defect_types))
+        
+        if min_severity:
+            stmt = stmt.where(RoadDefectModel.severity >= min_severity)
+        
+        stmt = stmt.order_by(RoadDefectModel.created_at).offset(offset).limit(limit)
+        
+        result = await self.session.execute(stmt)
+        models = result.scalars().all()
+        
+        return [await self._to_entity(m) for m in models]
+    
     async def find_nearby(
         self,
         center: Coordinate,

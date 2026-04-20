@@ -70,22 +70,19 @@ export const getPendingDefects = async ({ limit = 50, offset = 0 } = {}) => {
 };
 
 export const moderateDefect = async (defect_id, { status, rejection_reason }) => {
-  const formData = new URLSearchParams();
-  formData.append('status', status);
-  if (rejection_reason) formData.append('rejection_reason', rejection_reason);
-  const { data } = await defectsApi.patch(`/v1/defects/${defect_id}/moderate`, formData, {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-  });
+  let url = `/v1/defects/${defect_id}/moderate?status=${status}`;
+  if (rejection_reason) {
+    url += `&rejection_reason=${encodeURIComponent(rejection_reason)}`;
+  }
+  const { data } = await defectsApi.patch(url);
   return data;
 };
 
-// Получение дефекта по ID
 export const getDefectById = async (defectId) => {
   const { data } = await defectsApi.get(`/v1/defects/${defectId}`);
   return data;
 };
 
-// Удаление дефекта
 export const deleteDefect = async (defectId) => {
   try {
     const { data } = await defectsApi.delete(`/v1/defects/${defectId}`);
@@ -95,7 +92,6 @@ export const deleteDefect = async (defectId) => {
     throw error;
   }
 };
-
 
 export const snapPoint = async ({ longitude, latitude, max_distance_meters = 15 }) => {
   const { data } = await defectsApi.post('/v1/snap-point', {

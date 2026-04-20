@@ -31,7 +31,11 @@ class DefectUpdateUseCase(BaseDefectUpdateUseCase):
                 severity=request.severity,
                 description=request.description
             )
+            
             defect.status = DefectStatus.PENDING
+            if request.fixed:
+                defect.status = DefectStatus.FIXED
+            
             # Сохраняем
             updated_defect = await uow.defects.save(defect)
             await uow.commit()

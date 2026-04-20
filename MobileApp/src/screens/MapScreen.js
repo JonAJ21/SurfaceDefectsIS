@@ -1,12 +1,84 @@
 // MobileApp/src/screens/MapScreen.js
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
-import { View, StyleSheet, Alert, Platform, TouchableOpacity, Text, Animated } from 'react-native';
+import { 
+  View, 
+  StyleSheet, 
+  Alert, 
+  Platform, 
+  TouchableOpacity, 
+  Text, 
+  Animated, 
+  Dimensions,
+  ActivityIndicator
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
-import { getNearbyDefects, DEFECT_TYPE_LABELS, snapPoint } from '../services/defectsService';
+import { getDefectById, DEFECT_TYPE_LABELS, SEVERITY_LABELS, snapPoint } from '../services/defectsService';
+import { defectsGrid, SEVERITY_COLORS } from '../services/defectsGridService';
 import { WebViewMessageTypes, ReactToWebViewTypes } from '../assets/map/map-bridge';
 import * as Location from 'expo-location';
 import { useAuth } from '../context/AuthContext';
+import { formatDate } from '../utils/date';
+
+const { width, height } = Dimensions.get('window');
+
+// Компонент попапа дефекта
+const DefectPopup = ({ visible, defect, onClose, onNavigate }) => {
+  if (!defect || !visible) return null;
+
+  const severityColor = SEVERITY_COLORS[defect.severity] || SEVERITY_COLORS.low;
+
+  return (
+    <View style={styles.popupContainer}>
+      <View style={styles.popupHeader}>
+        <View style={[styles.severityBadge, { backgroundColor: severityColor + '20' }]}>
+          <View style={[styles.severityDot, { backgroundColor: severityColor }]} />
+          <Text style={[styles.severityText, { color: severityColor }]}>
+            {SEVERITY_LABELS[defect.severity] || defect.severity}
+          </Text>
+        </View>
+        <TouchableOpacity onPress={onClose} style={styles.popupCloseBtn}>
+          <Ionicons name="close" size={22} color="#64748b" />
+        </TouchableOpacity>
+      </View>
+
+      <Text style={styles.popupTitle}>
+        {DEFECT_TYPE_LABELS[defect.defect_type] || defect.defect_type}
+      </Text>
+
+      {defect.description ? (
+        <Text style={styles.popupDescription} numberOfLines={3}>{defect.description}</Text>
+      ) : (
+        <Text style={styles.popupNoDescription}>Нет описания</Text>
+      )}
+
+      {defect.road_name && defect.road_name !== 'null' && (
+        <View style={styles.popupInfoRow}>
+          <Ionicons name="location-outline" size={16} color="#64748b" />
+          <Text style={styles.popupInfoText} numberOfLines={1}>{defect.road_name}</Text>
+        </View>
+      )}
+
+      <View style={styles.popupInfoRow}>
+        <Ionicons name="time-outline" size={16} color="#64748b" />
+        <Text style={styles.popupInfoText}>{formatDate(defect.created_at)}</Text>
+      </View>
+
+      <TouchableOpacity 
+        style={styles.popupNavigateBtn}
+        onPress={() => {
+          onClose();
+          if (defect.lat && defect.lon) {
+            onNavigate(defect.lat, defect.lon);
+          }
+        }}
+      >
+        <Ionicons name="navigate" size={18} color="#fff" />
+        <Text style={styles.popupNavigateText}>Показать на карте</Text>
+      </TouchableOpacity>
+    </View>
+  );
+};
 
 // Компонент Toast уведомлений
 const Toast = ({ visible, message, type, onHide }) => {
@@ -147,8 +219,48 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
         
         var locationMode = 0;
         var currentSpeed = 0;
+        var currentUserLat = null;
+        var currentUserLng = null;
         window.prevCoords = null;
         var isFirstFix = true;
+        var lastBoundsSent = null;
+        var lastCenterSent = null;
+        
+        // Хранилище для линий (для отображения при приближении)
+        var allLines = [];
+
+        function getMapBounds() {
+          var bounds = map.getBounds();
+          if (bounds) {
+            var sw = bounds.getSouthWest();
+            var ne = bounds.getNorthEast();
+            var boundsData = {
+              min_longitude: sw.lng,
+              min_latitude: sw.lat,
+              max_longitude: ne.lng,
+              max_latitude: ne.lat
+            };
+            if (window.sendToReact && JSON.stringify(boundsData) !== lastBoundsSent) {
+              lastBoundsSent = JSON.stringify(boundsData);
+              window.sendToReact('MAP_BOUNDS', boundsData);
+            }
+          }
+        }
+
+        function getMapCenter() {
+          var center = map.getCenter();
+          if (center && window.sendToReact) {
+            var centerData = {
+              lat: center.lat,
+              lng: center.lng,
+              zoom: map.getZoom()
+            };
+            if (JSON.stringify(centerData) !== lastCenterSent) {
+              lastCenterSent = JSON.stringify(centerData);
+              window.sendToReact('MAP_CENTER', centerData);
+            }
+          }
+        }
 
         function showSnapIndicator(message, isError = false) {
           var el = document.getElementById('snap-indicator');
@@ -345,8 +457,10 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
             var data = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
             if (!data || !data.type) return;
 
-            if (data.type === 'ZOOM_IN') { map.zoomIn(); return; }
-            if (data.type === 'ZOOM_OUT') { map.zoomOut(); return; }
+            if (data.type === 'ZOOM_IN') { map.zoomIn(); getMapBounds(); getMapCenter(); return; }
+            if (data.type === 'ZOOM_OUT') { map.zoomOut(); getMapBounds(); getMapCenter(); return; }
+            if (data.type === 'GET_BOUNDS') { getMapBounds(); return; }
+            if (data.type === 'GET_CENTER') { getMapCenter(); return; }
             
             if (data.type === 'CENTER_MAP') {
               map.flyTo({
@@ -360,21 +474,91 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
             if (data.type === 'TOGGLE_LOCATION_MODE') {
               locationMode = (locationMode + 1) % 3;
               if (window.sendToReact) window.sendToReact('LOCATION_MODE_CHANGED', locationMode);
-              if (window.prevCoords) updateLocation(window.prevCoords[0], window.prevCoords[1], currentSpeed);
+              if (currentUserLat && currentUserLng) {
+                updateLocation(currentUserLng, currentUserLat, currentSpeed);
+              }
               return;
             }
             
             if (data.type === 'SET_USER_LOCATION' && data.payload) {
+              currentUserLat = data.payload.lat;
+              currentUserLng = data.payload.lng;
               updateLocation(data.payload.lng, data.payload.lat, data.payload.speed ?? currentSpeed);
               return;
             }
             
             if (data.type === 'SET_DEFECTS' && Array.isArray(data.payload)) {
-              var features = data.payload.filter(d => d.lat && d.lon).map(d => ({
-                type: 'Feature', geometry: { type: 'Point', coordinates: [parseFloat(d.lon), parseFloat(d.lat)] }, properties: d
-              }));
-              var source = map.getSource('defects');
-              if (source) source.setData({ type: 'FeatureCollection', features: features });
+              // Сохраняем все линии
+              allLines = [];
+              var pointFeatures = [];
+              
+              data.payload.forEach(defect => {
+                if (defect.geometry_type === 'linestring' && defect.coordinates && defect.coordinates.length >= 2) {
+                  // Сохраняем линию для отображения при приближении
+                  allLines.push({
+                    type: 'Feature',
+                    geometry: { type: 'LineString', coordinates: defect.coordinates.map(coord => [parseFloat(coord[0]), parseFloat(coord[1])]) },
+                    properties: {
+                      id: defect.id,
+                      type: defect.type,
+                      description: defect.description,
+                      road_name: defect.road_name,
+                      severity: defect.severity,
+                      defect_type: defect.defect_type,
+                      created_at: defect.created_at,
+                      status: defect.status,
+                      color: defect.color
+                    }
+                  });
+                  
+                  // Добавляем центр линии как точку для кластеризации
+                  var center = defect.coordinates[Math.floor(defect.coordinates.length / 2)];
+                  pointFeatures.push({
+                    type: 'Feature',
+                    geometry: { type: 'Point', coordinates: [parseFloat(center[0]), parseFloat(center[1])] },
+                    properties: {
+                      id: defect.id,
+                      type: defect.type,
+                      description: defect.description,
+                      road_name: defect.road_name,
+                      severity: defect.severity,
+                      defect_type: defect.defect_type,
+                      created_at: defect.created_at,
+                      status: defect.status,
+                      color: defect.color,
+                      isLine: true
+                    }
+                  });
+                } else if (defect.lat && defect.lon) {
+                  // Точечный дефект
+                  pointFeatures.push({
+                    type: 'Feature',
+                    geometry: { type: 'Point', coordinates: [parseFloat(defect.lon), parseFloat(defect.lat)] },
+                    properties: {
+                      id: defect.id,
+                      type: defect.type,
+                      description: defect.description,
+                      road_name: defect.road_name,
+                      severity: defect.severity,
+                      defect_type: defect.defect_type,
+                      created_at: defect.created_at,
+                      status: defect.status,
+                      color: defect.color,
+                      isLine: false
+                    }
+                  });
+                }
+              });
+              
+              // Обновляем источник точек (для кластеризации)
+              var pointsSource = map.getSource('defects-points');
+              if (pointsSource) {
+                pointsSource.setData({ type: 'FeatureCollection', features: pointFeatures });
+              }
+              
+              // Обновляем линии (отображаются только при достаточном приближении)
+              updateLinesByZoom();
+              
               return;
             }
             
@@ -417,9 +601,38 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
 
         if (document.addEventListener) document.addEventListener('message', handleMessage, false);
         if (window.addEventListener) window.addEventListener('message', handleMessage, false);
+        
+        // Функция обновления линий в зависимости от зума
+        function updateLinesByZoom() {
+          var currentZoom = map.getZoom();
+          var linesSource = map.getSource('defect-lines');
+          
+          if (linesSource) {
+            if (currentZoom >= 14) {
+              // При большом зуме показываем все линии
+              linesSource.setData({ type: 'FeatureCollection', features: allLines });
+            } else {
+              // При маленьком зуме показываем только линии в видимой области
+              var bounds = map.getBounds();
+              if (bounds && allLines.length > 0) {
+                var visibleLines = allLines.filter(line => {
+                  var coords = line.geometry.coordinates;
+                  return coords.some(coord => 
+                    bounds.contains([coord[0], coord[1]])
+                  );
+                });
+                linesSource.setData({ type: 'FeatureCollection', features: visibleLines });
+              } else {
+                linesSource.setData({ type: 'FeatureCollection', features: [] });
+              }
+            }
+          }
+        }
 
         function updateLocation(lng, lat, speed) {
           currentSpeed = speed;
+          currentUserLat = lat;
+          currentUserLng = lng;
           
           if (map.getLayer('user-marker-circle')) map.removeLayer('user-marker-circle');
           if (map.getLayer('user-marker-accuracy')) map.removeLayer('user-marker-accuracy');
@@ -450,18 +663,156 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
         }
 
         map.on('load', function() {
-          map.addSource('defects', { type: 'geojson', data: { type: 'FeatureCollection', features: [] }, cluster: true, clusterMaxZoom: 14, clusterRadius: 50 });
-          map.addLayer({ id: 'defects-clusters', type: 'circle', source: 'defects', filter: ['has', 'point_count'], paint: { 'circle-color': ['step', ['get', 'point_count'], '#3b82f6', 10, '#f59e0b', 100, '#ef4444'], 'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 100, 22] } });
-          map.addLayer({ id: 'defects-count', type: 'symbol', source: 'defects', filter: ['has', 'point_count'], layout: { 'text-field': '{point_count_abbreviated}', 'text-font': ['Noto Sans Bold'], 'text-size': 12 }, paint: { 'text-color': '#fff' } });
-          map.addLayer({ id: 'defects-points', type: 'circle', source: 'defects', filter: ['!', ['has', 'point_count']], paint: { 'circle-radius': 9, 'circle-color': '#ef4444', 'circle-stroke-width': 2, 'circle-stroke-color': '#fff' } });
+          // Источник для точек с кластеризацией
+          map.addSource('defects-points', { 
+            type: 'geojson', 
+            data: { type: 'FeatureCollection', features: [] }, 
+            cluster: true, 
+            clusterMaxZoom: 14, 
+            clusterRadius: 50 
+          });
+          
+          // Кластеры
+          map.addLayer({ 
+            id: 'defects-clusters', 
+            type: 'circle', 
+            source: 'defects-points', 
+            filter: ['has', 'point_count'], 
+            paint: { 
+              'circle-color': [
+                'step', ['get', 'point_count'],
+                '#22c55e', 10, '#f59e0b', 50, '#f97316', 100, '#dc2626'
+              ],
+              'circle-radius': ['step', ['get', 'point_count'], 12, 10, 16, 50, 22, 100, 28],
+              'circle-opacity': 0.8,
+              'circle-stroke-width': 2,
+              'circle-stroke-color': '#fff'
+            } 
+          });
+          
+          // Счётчик на кластере
+          map.addLayer({ 
+            id: 'defects-count', 
+            type: 'symbol', 
+            source: 'defects-points', 
+            filter: ['has', 'point_count'], 
+            layout: { 
+              'text-field': '{point_count_abbreviated}', 
+              'text-font': ['Noto Sans Bold'], 
+              'text-size': 12 
+            }, 
+            paint: { 'text-color': '#fff' } 
+          });
+          
+          // Отдельные точки (некластеризованные)
+          map.addLayer({ 
+            id: 'defects-points-layer', 
+            type: 'circle', 
+            source: 'defects-points', 
+            filter: ['!', ['has', 'point_count']], 
+            paint: { 
+              'circle-radius': 9,
+              'circle-color': ['get', 'color'],
+              'circle-stroke-width': 2,
+              'circle-stroke-color': '#fff',
+              'circle-opacity': 0.9
+            } 
+          });
+          
+          // Источник для линий
+          map.addSource('defect-lines', { 
+            type: 'geojson', 
+            data: { type: 'FeatureCollection', features: [] }
+          });
+          
+          // Слой для линий (показывается только при зуме >= 14)
+          map.addLayer({
+            id: 'defect-lines-layer',
+            type: 'line',
+            source: 'defect-lines',
+            minzoom: 14,
+            paint: {
+              'line-color': ['get', 'color'],
+              'line-width': 4,
+              'line-opacity': 0.8
+            }
+          });
+          
+          // Клик по кластеру
+          map.on('click', 'defects-clusters', function(e) {
+            var features = map.queryRenderedFeatures(e.point, { layers: ['defects-clusters'] });
+            var clusterId = features[0].properties.cluster_id;
+            map.getSource('defects-points').getClusterExpansionZoom(clusterId, function(err, zoom) {
+              if (err) return;
+              map.easeTo({
+                center: features[0].geometry.coordinates,
+                zoom: zoom
+              });
+            });
+          });
+          
+          // Клик по точке
+          map.on('click', 'defects-points-layer', function(e) {
+            var props = e.features[0].properties;
+            var coords = e.features[0].geometry.coordinates;
+            if (window.sendToReact) {
+              window.sendToReact('DEFECT_CLICK', { 
+                id: props.id, 
+                lat: coords[1], 
+                lng: coords[0], 
+                type: props.type, 
+                description: props.description, 
+                road_name: props.road_name,
+                severity: props.severity,
+                defect_type: props.defect_type,
+                created_at: props.created_at,
+                status: props.status
+              });
+            }
+          });
+          
+          // Клик по линии
+          map.on('click', 'defect-lines-layer', function(e) {
+            var props = e.features[0].properties;
+            var coords = e.features[0].geometry.coordinates;
+            var center = coords[Math.floor(coords.length / 2)];
+            if (window.sendToReact) {
+              window.sendToReact('DEFECT_CLICK', { 
+                id: props.id, 
+                lat: center[1], 
+                lng: center[0], 
+                type: props.type, 
+                description: props.description, 
+                road_name: props.road_name,
+                severity: props.severity,
+                defect_type: props.defect_type,
+                created_at: props.created_at,
+                status: props.status
+              });
+            }
+          });
+          
+          map.on('mouseenter', 'defects-clusters', function() { map.getCanvas().style.cursor = 'pointer'; });
+          map.on('mouseleave', 'defects-clusters', function() { map.getCanvas().style.cursor = ''; });
+          map.on('mouseenter', 'defects-points-layer', function() { map.getCanvas().style.cursor = 'pointer'; });
+          map.on('mouseleave', 'defects-points-layer', function() { map.getCanvas().style.cursor = ''; });
+          map.on('mouseenter', 'defect-lines-layer', function() { map.getCanvas().style.cursor = 'pointer'; });
+          map.on('mouseleave', 'defect-lines-layer', function() { map.getCanvas().style.cursor = ''; });
+          
+          map.on('moveend', function() {
+            getMapBounds();
+            getMapCenter();
+            updateLinesByZoom();
+          });
+          
+          map.on('zoomend', function() {
+            updateLinesByZoom();
+          });
+          
+          getMapBounds();
+          getMapCenter();
+          
           if (window.sendToReact) window.sendToReact('MAP_READY', null);
-        });
-        
-        map.on('click', 'defects-points', function(e) {
-          var props = e.features[0].properties;
-          if (window.sendToReact) {
-            window.sendToReact('DEFECT_CLICK', { id: props.id, lat: e.lngLat.lat, lng: e.lngLat.lng, type: props.type, description: props.description, road_name: props.road_name });
-          }
         });
       <\/script>
     </body>
@@ -471,20 +822,27 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
 
 export default function MapScreen({ navigation, route }) {
   const webViewRef = useRef(null);
+  const iframeRef = useRef(null);
   const [mapReady, setMapReady] = useState(false);
   const [defects, setDefects] = useState([]);
   const [userLocation, setUserLocation] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadingDefects, setLoadingDefects] = useState(false);
   const [locationMode, setLocationMode] = useState(0);
   const [currentSpeed, setCurrentSpeed] = useState(0);
+  const [currentZoom, setCurrentZoom] = useState(16);
   const [drawMode, setDrawMode] = useState(false);
   const [drawPoints, setDrawPoints] = useState([]);
   const [toast, setToast] = useState({ visible: false, message: '', type: 'info' });
-  const [disableTracking, setDisableTracking] = useState(false);
+  const [selectedDefect, setSelectedDefect] = useState(null);
+  const [popupVisible, setPopupVisible] = useState(false);
   const { user, isVerified } = useAuth();
 
   const locationSubscription = useRef(null);
   const lastPosRef = useRef(null);
+  const pendingCenterRef = useRef(null);
+  const loadTimeoutRef = useRef(null);
+  const currentBoundsRef = useRef(null);
 
   const showToast = useCallback((message, type = 'info') => {
     setToast({ visible: true, message, type });
@@ -503,168 +861,95 @@ export default function MapScreen({ navigation, route }) {
 
   const mapHtml = useMemo(() => getMapHTML(baseUrl, initialCenter), [baseUrl, initialCenter]);
 
-  // ===== ВСЕ ФУНКЦИИ ОБЪЯВЛЕНЫ ЗДЕСЬ, ПЕРЕД ИХ ИСПОЛЬЗОВАНИЕМ В useEffect =====
-  
   const sendToMap = useCallback((type, payload) => {
     const msg = JSON.stringify({ type, payload });
+    
     if (Platform.OS === 'web') {
-      const iframe = document.querySelector('iframe#map-iframe');
-      if (iframe?.contentWindow) iframe.contentWindow.postMessage(msg, '*');
+      const iframe = iframeRef.current;
+      if (iframe && iframe.contentWindow) {
+        iframe.contentWindow.postMessage(msg, '*');
+      }
     } else {
-      if (webViewRef.current) webViewRef.current.postMessage(msg);
+      if (webViewRef.current) {
+        webViewRef.current.postMessage(msg);
+      }
     }
   }, []);
 
-  const fetchNearbyDefects = useCallback(async (lat, lng, radius = 500) => {
-    try {
-      const data = await getNearbyDefects({ latitude: lat, longitude: lng, radius_meters: radius });
-      setDefects(data.map(d => ({
-        id: d.id, 
-        lat: d.snapped_coordinates?.[1] || d.original_coordinates?.[1], 
-        lon: d.snapped_coordinates?.[0] || d.original_coordinates?.[0],
-        type: DEFECT_TYPE_LABELS[d.defect_type] || d.defect_type,
-        defect_type: d.defect_type,
-        severity: d.severity, 
-        description: d.description, 
-        status: d.status,
-        road_name: d.road_name, 
-        distance_meters: d.distance_meters, 
-        photos: d.photos || [], 
-        created_at: d.created_at
-      })));
-    } catch (e) { 
-      console.error('Fetch nearby defects error:', e);
-      showToast('Не удалось загрузить дефекты', 'error');
-    }
-  }, [showToast]);
-
-  const startLocationTracking = useCallback(async () => {
-    // Если отключено слежение - не запускаем
-    if (disableTracking) {
-      setLoading(false);
-      return;
-    }
+  // Подписка на обновления от grid менеджера
+  useEffect(() => {
+    const unsubscribe = defectsGrid.subscribe((data) => {
+      if (data.type === 'loading' || data.type === 'loading_cell' || data.type === 'loading_area') {
+        setLoadingDefects(true);
+      }
+      if (data.type === 'viewport_loaded' || data.type === 'area_loaded' || data.type === 'cell_loaded') {
+        if (data.defects && data.defects.length > 0) {
+          setDefects(data.defects);
+          sendToMap(ReactToWebViewTypes.SET_DEFECTS, data.defects);
+        }
+        setLoadingDefects(false);
+      }
+      if (data.type === 'cell_cached') {
+        if (data.defects && data.defects.length > 0) {
+          setDefects(prev => {
+            const newDefects = [...prev];
+            for (const defect of data.defects) {
+              const index = newDefects.findIndex(d => d.id === defect.id);
+              if (index === -1) {
+                newDefects.push(defect);
+              }
+            }
+            return newDefects;
+          });
+          sendToMap(ReactToWebViewTypes.SET_DEFECTS, defects);
+        }
+      }
+      if (data.type === 'error') {
+        setLoadingDefects(false);
+        showToast('Ошибка загрузки дефектов', 'error');
+      }
+    });
     
+    return unsubscribe;
+  }, [sendToMap, showToast, defects]);
+
+  // Отслеживание геолокации
+  const startLocationTracking = useCallback(async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') { 
         showToast('Нет доступа к геолокации', 'error');
-        fetchNearbyDefects(55.6, 37.6); 
         setLoading(false); 
         return; 
       }
 
       locationSubscription.current = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.High, timeInterval: 1500, distanceInterval: 2 },
+        { accuracy: Location.Accuracy.High, timeInterval: 2000, distanceInterval: 5 },
         (loc) => {
           const { latitude, longitude, speed, timestamp } = loc.coords;
           let calcSpeed = speed != null ? speed * 3.6 : 0;
-          
-          if (lastPosRef.current) {
-            const R = 6371000;
-            const dLat = (latitude - lastPosRef.current.lat) * (Math.PI / 180);
-            const dLon = (longitude - lastPosRef.current.lon) * (Math.PI / 180);
-            const a = Math.sin(dLat / 2) ** 2 + Math.cos(lastPosRef.current.lat * (Math.PI / 180)) * Math.cos(latitude * (Math.PI / 180)) * Math.sin(dLon / 2) ** 2;
-            const dist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            const timeDiff = (timestamp - lastPosRef.current.timestamp) / 1000;
-            if (timeDiff > 0) calcSpeed = (dist / timeDiff) * 3.6;
-          }
-
           if (calcSpeed < 1) calcSpeed = 0;
+          
           lastPosRef.current = { lat: latitude, lon: longitude, timestamp };
           setCurrentSpeed(Math.round(calcSpeed));
           
-          sendToMap(ReactToWebViewTypes.SET_USER_LOCATION, { lat: latitude, lng: longitude, speed: Math.round(calcSpeed) });
+          sendToMap(ReactToWebViewTypes.SET_USER_LOCATION, { 
+            lat: latitude, 
+            lng: longitude, 
+            speed: Math.round(calcSpeed) 
+          });
           setUserLocation({ lat: latitude, lng: longitude, speed: Math.round(calcSpeed) });
         }
       );
     } catch (e) {
       console.error('Location tracking error:', e);
       showToast('Ошибка определения местоположения', 'error');
-      fetchNearbyDefects(55.6, 37.6);
-    } finally { setLoading(false); }
-  }, [fetchNearbyDefects, showToast, sendToMap, disableTracking]);
-
-  const handleSnapPoint = useCallback(async (longitude, latitude) => {
-    try {
-      const result = await snapPoint({ longitude, latitude, max_distance_meters: 15 });
-      
-      if (result && result.snapped_longitude && result.snapped_latitude) {
-        const distance = result.distance_meters;
-        if (distance > 15) {
-          showToast(`Точка далеко от дороги (${distance.toFixed(0)} м)`, 'error');
-        } else if (result.road_info?.road_name) {
-          showToast(`Привязано к дороге: ${result.road_info.road_name}`, 'success');
-        } else {
-          showToast('Точка привязана к дороге', 'success');
-        }
-        sendToMap('SNAP_RESPONSE', { success: true, ...result });
-        return { success: true, ...result };
-      } else {
-        let errorMessage = 'Не удалось привязать точку к дороге';
-        if (result?.detail) {
-          if (typeof result.detail === 'object') {
-            errorMessage = result.detail.detail || result.detail.error || errorMessage;
-          } else if (typeof result.detail === 'string') {
-            errorMessage = result.detail;
-          }
-        }
-        showToast(errorMessage, 'error');
-        sendToMap('SNAP_RESPONSE', { success: false, error: true, message: errorMessage });
-        return { success: false, error: true, message: errorMessage };
-      }
-    } catch (error) {
-      console.error('Snap error:', error);
-      
-      let errorMessage = 'Ошибка привязки к дороге';
-      
-      if (error.response) {
-        const status = error.response.status;
-        const responseData = error.response.data;
-        
-        if (status === 404) {
-          if (responseData?.detail) {
-            const detail = responseData.detail;
-            if (typeof detail === 'object' && detail.error === 'Road not found') {
-              errorMessage = detail.detail || 'Дорога не найдена. Точка слишком далеко от дорог';
-            } else if (typeof detail === 'string') {
-              errorMessage = detail;
-            } else {
-              errorMessage = 'Дорога не найдена. Точка слишком далеко от дорог';
-            }
-          } else {
-            errorMessage = 'Дорога не найдена. Точка слишком далеко от дорог';
-          }
-        } else if (status === 400) {
-          errorMessage = 'Некорректные координаты';
-        } else if (status === 401 || status === 403) {
-          errorMessage = 'Нет доступа к сервису привязки';
-        } else if (status === 500) {
-          errorMessage = 'Ошибка сервера. Попробуйте позже';
-        } else {
-          errorMessage = responseData?.detail || responseData?.message || `Ошибка ${status}`;
-          if (typeof errorMessage === 'object') {
-            errorMessage = errorMessage.detail || errorMessage.error || 'Неизвестная ошибка';
-          }
-        }
-      } else if (error.request) {
-        errorMessage = 'Нет соединения с сервером';
-      } else if (error.message) {
-        errorMessage = error.message;
-      }
-      
-      showToast(errorMessage, 'error');
-      sendToMap('SNAP_RESPONSE', { 
-        success: false, 
-        error: true, 
-        message: errorMessage,
-        status: error.response?.status
-      });
-      
-      return { success: false, error: true, message: errorMessage };
+    } finally { 
+      setLoading(false); 
     }
   }, [sendToMap, showToast]);
 
+  // Обработка сообщений от карты
   const handleMapMessage = useCallback(async (data) => {
     try {
       if (typeof data !== 'string') return;
@@ -675,20 +960,84 @@ export default function MapScreen({ navigation, route }) {
         setMapReady(true); 
         startLocationTracking(); 
         showToast('Карта загружена', 'success');
+        
+        if (pendingCenterRef.current) {
+          const { lat, lng, zoom } = pendingCenterRef.current;
+          sendToMap('CENTER_MAP', { lat, lng, zoom });
+          pendingCenterRef.current = null;
+        }
+      }
+      
+      if (msg.type === 'MAP_CENTER') {
+        const { lat, lng, zoom } = msg.payload;
+        setCurrentZoom(zoom);
+        
+        if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
+        loadTimeoutRef.current = setTimeout(() => {
+          defectsGrid.smartLoad(lat, lng, zoom, currentBoundsRef.current);
+        }, 300);
+      }
+      
+      if (msg.type === 'MAP_BOUNDS') {
+        currentBoundsRef.current = msg.payload;
+      }
+      
+      if (msg.type === 'MAP_ZOOM_CHANGED') {
+        const newZoom = msg.payload.zoom;
+        if (Math.abs(newZoom - currentZoom) >= 1) {
+          setCurrentZoom(newZoom);
+        }
       }
       
       if (msg.type === WebViewMessageTypes.DEFECT_CLICK) {
-        Alert.alert(
-          msg.payload.type || 'Дефект', 
-          `${msg.payload.description || ''}\n📍 ${msg.payload.road_name || ''}`,
-          [{ text: 'Закрыть', style: 'cancel' }]
-        );
+        const fullDefect = defects.find(d => d.id === msg.payload.id);
+        if (fullDefect) {
+          setSelectedDefect(fullDefect);
+          setPopupVisible(true);
+        } else {
+          try {
+            const defectData = await getDefectById(msg.payload.id);
+            let coords = defectData.snapped_coordinates || defectData.original_coordinates;
+            let centerLat = null, centerLon = null;
+            
+            if (coords) {
+              if (Array.isArray(coords[0]) && coords[0].length === 2) {
+                centerLat = coords[0][1];
+                centerLon = coords[0][0];
+              } else if (coords.length === 2 && typeof coords[0] === 'number') {
+                centerLat = coords[1];
+                centerLon = coords[0];
+              }
+            }
+            
+            setSelectedDefect({ 
+              ...defectData, 
+              lat: centerLat, 
+              lon: centerLon,
+              color: SEVERITY_COLORS[defectData.severity] || SEVERITY_COLORS.low
+            });
+            setPopupVisible(true);
+          } catch (error) {
+            console.error('Failed to load defect details:', error);
+          }
+        }
       }
       
-      if (msg.type === 'LOCATION_MODE_CHANGED') setLocationMode(msg.payload);
+      if (msg.type === 'LOCATION_MODE_CHANGED') {
+        setLocationMode(msg.payload);
+      }
       
       if (msg.type === 'SNAP_POINT') {
-        await handleSnapPoint(msg.payload.longitude, msg.payload.latitude);
+        try {
+          const result = await snapPoint({ 
+            longitude: msg.payload.longitude, 
+            latitude: msg.payload.latitude, 
+            max_distance_meters: 15 
+          });
+          sendToMap('SNAP_RESPONSE', { success: true, ...result });
+        } catch (error) {
+          sendToMap('SNAP_RESPONSE', { success: false, error: true, message: error.message });
+        }
       }
       
       if (msg.type === 'DRAW_POINT_ADDED') {
@@ -727,29 +1076,24 @@ export default function MapScreen({ navigation, route }) {
       }
     } catch (e) {
       console.error('Message handling error:', e);
-      showToast('Ошибка обработки данных карты', 'error');
     }
-  }, [startLocationTracking, userLocation, navigation, sendToMap, handleSnapPoint, drawPoints.length, showToast]);
+  }, [startLocationTracking, userLocation, navigation, sendToMap, drawPoints.length, showToast, defects, currentZoom]);
 
-  // ===== useEffect ХУКИ - ИСПОЛЬЗУЮТ ФУНКЦИИ, ОБЪЯВЛЕННЫЕ ВЫШЕ =====
-  
-  // Обработка параметров из навигации
+  // Обработка параметров навигации
   useEffect(() => {
-    if (route.params?.disableLocationTracking) {
-      setDisableTracking(true);
-      navigation.setParams({ disableLocationTracking: null });
-    }
-  }, [route.params, navigation]);
-
-  // Обработка центрирования на дефекте из параметров навигации
-  useEffect(() => {
-    if (route.params?.centerTo && mapReady) {
+    if (route.params?.centerTo) {
       const { lat, lng, zoom = 18 } = route.params.centerTo;
-      sendToMap('CENTER_MAP', { lat, lng, zoom });
+      if (mapReady) {
+        sendToMap('CENTER_MAP', { lat, lng, zoom });
+        showToast('Карта центрирована на дефекте', 'info');
+      } else {
+        pendingCenterRef.current = { lat, lng, zoom };
+      }
       navigation.setParams({ centerTo: null });
     }
-  }, [route.params, mapReady, sendToMap, navigation]);
+  }, [route.params, mapReady, sendToMap, showToast]);
 
+  // Web listener
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const listener = (e) => handleMapMessage(e.data);
@@ -757,27 +1101,24 @@ export default function MapScreen({ navigation, route }) {
     return () => window.removeEventListener('message', listener);
   }, [handleMapMessage]);
 
-  useEffect(() => { 
-    if (mapReady && defects.length > 0) sendToMap(ReactToWebViewTypes.SET_DEFECTS, defects); 
-  }, [defects, mapReady, sendToMap]);
-
+  // Cleanup
   useEffect(() => { 
     const subscription = locationSubscription.current;
     return () => { 
       if (subscription) {
         try {
-          if (typeof subscription.remove === 'function') {
-            subscription.remove();
-          }
+          subscription.remove();
         } catch (error) {
           console.warn('Error removing location subscription:', error);
         }
       }
+      if (loadTimeoutRef.current) {
+        clearTimeout(loadTimeoutRef.current);
+      }
     }; 
   }, []);
 
-  // ===== ОСТАЛЬНЫЕ ФУНКЦИИ =====
-  
+  // Функции UI
   const startDrawing = () => {
     if (!user || !isVerified) {
       Alert.alert(
@@ -820,22 +1161,23 @@ export default function MapScreen({ navigation, route }) {
 
   const handleZoomIn = () => sendToMap('ZOOM_IN', null);
   const handleZoomOut = () => sendToMap('ZOOM_OUT', null);
-  
-  const handleLocationToggle = () => {
-    setDisableTracking(false);
-    sendToMap('TOGGLE_LOCATION_MODE', null);
-  };
-  
+  const handleLocationToggle = () => sendToMap('TOGGLE_LOCATION_MODE', null);
   const handleMyDefects = () => navigation.navigate('MyDefects');
 
   const getLocationIcon = () => locationMode === 0 ? 'location-outline' : locationMode === 1 ? 'compass-outline' : 'navigate';
   const getLocationBg = () => locationMode === 0 ? '#fff' : '#eff6ff';
 
-  // ===== РЕНДЕР =====
+  const navigateToDefect = (lat, lng) => {
+    setPopupVisible(false);
+    setSelectedDefect(null);
+    sendToMap('CENTER_MAP', { lat, lng, zoom: 18 });
+  };
+
   return (
     <View style={styles.container}>
       {Platform.OS === 'web' ? (
         <iframe 
+          ref={iframeRef}
           id="map-iframe" 
           srcDoc={mapHtml} 
           style={styles.iframe} 
@@ -864,7 +1206,13 @@ export default function MapScreen({ navigation, route }) {
       )}
 
       <TouchableOpacity style={styles.profileButton} onPress={() => user ? navigation.navigate('Profile') : navigation.navigate('Login')}>
-        {user ? <View style={styles.avatarContainer}><Text style={styles.avatarText}>{(user.full_name || user.email || 'U').charAt(0).toUpperCase()}</Text></View> : <Ionicons name="person-outline" size={24} color="#0f172a" />}
+        {user ? (
+          <View style={styles.avatarContainer}>
+            <Text style={styles.avatarText}>{(user.full_name || user.email || 'U').charAt(0).toUpperCase()}</Text>
+          </View>
+        ) : (
+          <Ionicons name="person-outline" size={24} color="#0f172a" />
+        )}
       </TouchableOpacity>
 
       <TouchableOpacity style={styles.myDefectsButton} onPress={handleMyDefects}>
@@ -872,9 +1220,13 @@ export default function MapScreen({ navigation, route }) {
       </TouchableOpacity>
 
       <View style={styles.zoomContainer}>
-        <TouchableOpacity style={styles.zoomBtn} onPress={handleZoomIn}><Ionicons name="add" size={24} color="#0f172a" /></TouchableOpacity>
+        <TouchableOpacity style={styles.zoomBtn} onPress={handleZoomIn}>
+          <Ionicons name="add" size={24} color="#0f172a" />
+        </TouchableOpacity>
         <View style={styles.zoomDivider} />
-        <TouchableOpacity style={styles.zoomBtn} onPress={handleZoomOut}><Ionicons name="remove" size={24} color="#0f172a" /></TouchableOpacity>
+        <TouchableOpacity style={styles.zoomBtn} onPress={handleZoomOut}>
+          <Ionicons name="remove" size={24} color="#0f172a" />
+        </TouchableOpacity>
       </View>
 
       <TouchableOpacity style={[styles.locationButton, { backgroundColor: getLocationBg() }]} onPress={handleLocationToggle}>
@@ -928,6 +1280,23 @@ export default function MapScreen({ navigation, route }) {
         </View>
       )}
 
+      {loadingDefects && (
+        <View style={styles.loadingBadge}>
+          <ActivityIndicator size="small" color="#2563eb" />
+          <Text style={styles.loadingText}>Загрузка дефектов...</Text>
+        </View>
+      )}
+
+      <DefectPopup 
+        visible={popupVisible}
+        defect={selectedDefect}
+        onClose={() => {
+          setPopupVisible(false);
+          setSelectedDefect(null);
+        }}
+        onNavigate={navigateToDefect}
+      />
+
       <Toast 
         visible={toast.visible} 
         message={toast.message} 
@@ -943,33 +1312,311 @@ const styles = StyleSheet.create({
   webview: { flex: 1 }, 
   iframe: { flex: 1, borderWidth: 0, width: '100%', height: '100%' },
   
-  profileButton: { position: 'absolute', top: 16, right: 16, width: 48, height: 48, borderRadius: 24, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, zIndex: 60, borderWidth: 1, borderColor: '#e2e8f0' },
-  myDefectsButton: { position: 'absolute', top: 16, left: 16, width: 48, height: 48, borderRadius: 24, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, zIndex: 60, borderWidth: 1, borderColor: '#e2e8f0' },
-  avatarContainer: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#2563eb', justifyContent: 'center', alignItems: 'center' }, 
-  avatarText: { color: '#fff', fontSize: 18, fontWeight: '700' },
+  profileButton: { 
+    position: 'absolute', 
+    top: 16, 
+    right: 16, 
+    width: 48, 
+    height: 48, 
+    borderRadius: 24, 
+    backgroundColor: '#fff', 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    elevation: 4, 
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 2 }, 
+    shadowOpacity: 0.1, 
+    shadowRadius: 4, 
+    zIndex: 60, 
+    borderWidth: 1, 
+    borderColor: '#e2e8f0' 
+  },
+  myDefectsButton: { 
+    position: 'absolute', 
+    top: 16, 
+    left: 16, 
+    width: 48, 
+    height: 48, 
+    borderRadius: 24, 
+    backgroundColor: '#fff', 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    elevation: 4, 
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 2 }, 
+    shadowOpacity: 0.1, 
+    shadowRadius: 4, 
+    zIndex: 60, 
+    borderWidth: 1, 
+    borderColor: '#e2e8f0' 
+  },
+  avatarContainer: { 
+    width: 40, 
+    height: 40, 
+    borderRadius: 20, 
+    backgroundColor: '#2563eb', 
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  }, 
+  avatarText: { 
+    color: '#fff', 
+    fontSize: 18, 
+    fontWeight: '700' 
+  },
   
-  zoomContainer: { position: 'absolute', right: 16, top: '40%', backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, zIndex: 60, overflow: 'hidden' },
-  zoomBtn: { width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }, 
-  zoomDivider: { height: 1, backgroundColor: '#e2e8f0' },
+  zoomContainer: { 
+    position: 'absolute', 
+    right: 16, 
+    top: '40%', 
+    backgroundColor: '#fff', 
+    borderRadius: 12, 
+    borderWidth: 1, 
+    borderColor: '#e2e8f0', 
+    elevation: 4, 
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 2 }, 
+    shadowOpacity: 0.1, 
+    shadowRadius: 4, 
+    zIndex: 60, 
+    overflow: 'hidden' 
+  },
+  zoomBtn: { 
+    width: 44, 
+    height: 44, 
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  }, 
+  zoomDivider: { 
+    height: 1, 
+    backgroundColor: '#e2e8f0' 
+  },
   
-  locationButton: { position: 'absolute', bottom: 96, right: 16, width: 48, height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center', elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, zIndex: 60, borderWidth: 1, borderColor: '#e2e8f0' },
+  locationButton: { 
+    position: 'absolute', 
+    bottom: 96, 
+    right: 16, 
+    width: 48, 
+    height: 48, 
+    borderRadius: 24, 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    elevation: 4, 
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 2 }, 
+    shadowOpacity: 0.1, 
+    shadowRadius: 4, 
+    zIndex: 60, 
+    borderWidth: 1, 
+    borderColor: '#e2e8f0' 
+  },
   
-  fab: { position: 'absolute', bottom: 24, right: 24, width: 56, height: 56, borderRadius: 28, backgroundColor: '#2563eb', justifyContent: 'center', alignItems: 'center', elevation: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.25, shadowRadius: 4, zIndex: 50 },
-  fabActive: { backgroundColor: '#ef4444' },
+  fab: { 
+    position: 'absolute', 
+    bottom: 24, 
+    right: 24, 
+    width: 56, 
+    height: 56, 
+    borderRadius: 28, 
+    backgroundColor: '#2563eb', 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    elevation: 6, 
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 3 }, 
+    shadowOpacity: 0.25, 
+    shadowRadius: 4, 
+    zIndex: 50 
+  },
+  fabActive: { 
+    backgroundColor: '#ef4444' 
+  },
   
-  speedBadge: { position: 'absolute', bottom: 150, right: 16, backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, zIndex: 60 }, 
-  speedText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  speedBadge: { 
+    position: 'absolute', 
+    bottom: 150, 
+    right: 16, 
+    backgroundColor: 'rgba(0,0,0,0.7)', 
+    paddingHorizontal: 10, 
+    paddingVertical: 4, 
+    borderRadius: 12, 
+    zIndex: 60 
+  }, 
+  speedText: { 
+    color: '#fff', 
+    fontSize: 12, 
+    fontWeight: '700' 
+  },
   
-  drawPanel: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16, borderTopWidth: 1, borderTopColor: '#e2e8f0', zIndex: 100 },
-  drawPanelHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  drawPanelTitle: { fontSize: 16, fontWeight: '600', color: '#0f172a' },
-  drawPanelInfo: { fontSize: 13, color: '#64748b', marginBottom: 16 },
-  drawPanelActions: { flexDirection: 'row', gap: 12 },
-  drawPanelClear: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 12, borderRadius: 10, backgroundColor: '#fef2f2', gap: 8 },
-  drawPanelClearText: { color: '#ef4444', fontWeight: '600' },
-  drawPanelComplete: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 12, borderRadius: 10, backgroundColor: '#22c55e', gap: 8 },
-  drawPanelCompleteDisabled: { opacity: 0.5 },
-  drawPanelCompleteText: { color: '#fff', fontWeight: '600' },
+  loadingBadge: { 
+    position: 'absolute', 
+    top: 100, 
+    alignSelf: 'center', 
+    backgroundColor: 'rgba(0,0,0,0.7)', 
+    paddingHorizontal: 12, 
+    paddingVertical: 6, 
+    borderRadius: 20, 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    gap: 8, 
+    zIndex: 60 
+  },
+  loadingText: { 
+    color: '#fff', 
+    fontSize: 12 
+  },
+  
+  drawPanel: { 
+    position: 'absolute', 
+    bottom: 0, 
+    left: 0, 
+    right: 0, 
+    backgroundColor: '#fff', 
+    borderTopLeftRadius: 20, 
+    borderTopRightRadius: 20, 
+    padding: 16, 
+    borderTopWidth: 1, 
+    borderTopColor: '#e2e8f0', 
+    zIndex: 100 
+  },
+  drawPanelHeader: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    marginBottom: 12 
+  },
+  drawPanelTitle: { 
+    fontSize: 16, 
+    fontWeight: '600', 
+    color: '#0f172a' 
+  },
+  drawPanelInfo: { 
+    fontSize: 13, 
+    color: '#64748b', 
+    marginBottom: 16 
+  },
+  drawPanelActions: { 
+    flexDirection: 'row', 
+    gap: 12 
+  },
+  drawPanelClear: { 
+    flex: 1, 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    padding: 12, 
+    borderRadius: 10, 
+    backgroundColor: '#fef2f2', 
+    gap: 8 
+  },
+  drawPanelClearText: { 
+    color: '#ef4444', 
+    fontWeight: '600' 
+  },
+  drawPanelComplete: { 
+    flex: 1, 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    padding: 12, 
+    borderRadius: 10, 
+    backgroundColor: '#22c55e', 
+    gap: 8 
+  },
+  drawPanelCompleteDisabled: { 
+    opacity: 0.5 
+  },
+  drawPanelCompleteText: { 
+    color: '#fff', 
+    fontWeight: '600' 
+  },
+  
+  popupContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+    zIndex: 200,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  popupHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  severityBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+    gap: 6,
+  },
+  severityDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  severityText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  popupCloseBtn: {
+    padding: 4,
+  },
+  popupTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 8,
+  },
+  popupDescription: {
+    fontSize: 14,
+    color: '#475569',
+    lineHeight: 20,
+    marginBottom: 12,
+  },
+  popupNoDescription: {
+    fontSize: 14,
+    color: '#94a3b8',
+    fontStyle: 'italic',
+    marginBottom: 12,
+  },
+  popupInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  popupInfoText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#64748b',
+  },
+  popupNavigateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#2563eb',
+    padding: 12,
+    borderRadius: 10,
+    gap: 8,
+    marginTop: 8,
+  },
+  popupNavigateText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
   
   toast: {
     position: 'absolute',
@@ -989,5 +1636,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 4,
   },
-  toastText: { color: '#fff', fontSize: 14, fontWeight: '500', flex: 1, textAlign: 'center' },
+  toastText: { 
+    color: '#fff', 
+    fontSize: 14, 
+    fontWeight: '500', 
+    flex: 1, 
+    textAlign: 'center' 
+  },
 });

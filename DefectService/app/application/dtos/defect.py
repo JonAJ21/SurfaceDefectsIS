@@ -24,7 +24,14 @@ class DefectCreateRequestDTO(BaseModel):
 
 class DefectGetRequestDTO(BaseModel):
     defect_id: UUID
-    
+
+class DefectsGetRequestDTO(BaseModel):
+    offset: int = 0
+    limit: int = 100
+    defect_statuses: Optional[List[DefectStatus]] = None
+    defect_types: Optional[List[DefectType]] = None
+    min_severity: Optional[SeverityLevel] = None
+ 
 class DefectGetNearbyRequestDTO(BaseModel):
     longitude: float
     latitude: float
@@ -61,6 +68,7 @@ class DefectUpdateRequestDTO(BaseModel):
     defect_type: Optional[DefectType] = None
     severity: Optional[SeverityLevel] = None
     description: Optional[str] = None
+    fixed: Optional[bool] = None
     updated_by: str
     
 class DefectDeleteRequestDTO(BaseModel):

@@ -15,8 +15,8 @@ from application.usecases.defects.update import BaseDefectUpdateUseCase
 from application.usecases.defects.moderate import BaseDefectModerateUseCase, DefectModerateUseCase
 from application.usecases.defects.get_pending import BaseDefectGetPendingUseCase
 from application.usecases.defects.get_nearby import BaseDefectGetNearbyUseCase
-from application.usecases.defects.get import BaseDefectGetUseCase, DefectGetUseCase
-from application.dtos.defect import DefectCreateRequestDTO, DefectCreateResponseDTO, DefectDeleteRequestDTO, DefectDeleteResponseDTO, DefectGetByUserIdRequestDTO, DefectGetByUserIdResponseDTO, DefectGetInViewPortRequestDTO, DefectGetInViewPortResponseDTO, DefectGetNearbyRequestDTO, DefectGetNearbyResponseDTO, DefectGetPendingRequestDTO, DefectGetPendingResponseDTO, DefectGetRequestDTO, DefectGetResponseDTO, DefectModerateRequestDTO, DefectModerateResponseDTO, DefectUpdateRequestDTO, DefectUpdateResponseDTO, PhotoUploadDTO
+from application.usecases.defects.get import BaseDefectGetUseCase, BaseDefectsGetUseCase, DefectGetUseCase
+from application.dtos.defect import DefectCreateRequestDTO, DefectCreateResponseDTO, DefectDeleteRequestDTO, DefectDeleteResponseDTO, DefectGetByUserIdRequestDTO, DefectGetByUserIdResponseDTO, DefectGetInViewPortRequestDTO, DefectGetInViewPortResponseDTO, DefectGetNearbyRequestDTO, DefectGetNearbyResponseDTO, DefectGetPendingRequestDTO, DefectGetPendingResponseDTO, DefectGetRequestDTO, DefectGetResponseDTO, DefectModerateRequestDTO, DefectModerateResponseDTO, DefectUpdateRequestDTO, DefectUpdateResponseDTO, DefectsGetRequestDTO, PhotoUploadDTO
 from application.usecases.defects.create import BaseDefectCreateUseCase
 from domain.values.defect_types import DefectStatus, DefectType, GeometryType, SeverityLevel
 from presentation.api.v1.schemas.defect import DefectResponse, ErrorResponse
@@ -212,6 +212,32 @@ async def get_defects_nearby(
     
     return await get_usecase.execute(request_dto)
 
+
+@router.get(
+    "/defects",
+    response_model=List[DefectGetResponseDTO]
+)
+async def get_defects(
+    defect_statuses: Optional[List[DefectStatus]] = Query(None, description="Фильтр по статусу дефекта"),
+    defect_types: Optional[List[DefectType]] = Query(None, description="Фильтр по типам дефектов"),
+    min_severity: Optional[SeverityLevel] = Query(None, description="Минимальный уровень опасности"),
+    limit: int = Query(100, ge=1, description="Количество дефектов"),
+    offset: int = Query(0, ge=0, description="Смещение для пагинации"),
+    get_usecase: BaseDefectsGetUseCase = Depends()
+):
+    """
+    Получение дефектов
+    """
+    request_dto = DefectsGetRequestDTO(
+        defect_statuses=defect_statuses,
+        defect_types=defect_types,
+        min_severity=min_severity,
+        limit=limit,
+        offset=offset
+    )
+    
+    return await get_usecase.execute(request_dto)
+
 @router.get(
     "/defects/viewport/",
     response_model=List[DefectGetInViewPortResponseDTO]
@@ -297,8 +323,8 @@ async def get_pending_defects(
 )
 async def moderate_defect(
     defect_id: UUID,
-    status: DefectStatus = Form(...),
-    rejection_reason: Optional[str] = Form(None),
+    status: DefectStatus = Query(..., description="Новый статус (approved, rejected)"),
+    rejection_reason: Optional[str] = Query(None, description="Причина отклонения (обязательно для rejected)"),
     moderate_usecase: BaseDefectModerateUseCase = Depends(),
     auth_usecase: BaseUserAuthUseCase = Depends(),
     credentials: str = Depends(security_scheme),
@@ -364,6 +390,7 @@ async def update_defect(
     defect_id: UUID,
     defect_type: Optional[DefectType] = None,
     severity: Optional[SeverityLevel] = None,
+    fixed: Optional[bool] = None,
     description: Optional[str] = None,
     update_usecase: BaseDefectUpdateUseCase = Depends(),
     auth_usecase: BaseUserAuthUseCase = Depends(),
@@ -374,7 +401,7 @@ async def update_defect(
     # Проверяем доступ пользователя
     auth_request_dto = UserAuthRequestDTO(
         access_token=access_token,
-        # needed_permission_codes=['defects.create']
+        # needed_permission_codes=['defects.update']
     )
     try:
         auth_result = await auth_usecase.execute(auth_request_dto)
@@ -400,7 +427,8 @@ async def update_defect(
         defect_type=defect_type,
         severity=severity,
         description=description,
-        updated_by=user_id
+        updated_by=user_id,
+        fixed=fixed
     )
     
     try:

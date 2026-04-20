@@ -34,6 +34,7 @@ class DefectModerateRequest(BaseModel):
     rejection_reason: Optional[str] = Field(None, max_length=500, description="Причина отклонения (обязательно для rejected)")
 
 
+
 class DefectsNearbyQuery(BaseModel):
     longitude: float = Field(..., ge=-180, le=180, description="Долгота")
     latitude: float = Field(..., ge=-90, le=90, description="Широта")

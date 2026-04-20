@@ -2,20 +2,18 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
-  ActivityIndicator, RefreshControl, Image, Alert, Modal,
-  ScrollView, Platform, Dimensions
+  ActivityIndicator, RefreshControl, Image, Alert,
+  Platform
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { defectsApi } from '../config/api';
-import { DEFECT_TYPE_LABELS, SEVERITY_LABELS, DEFECT_STATUSES, deleteDefect } from '../services/defectsService';
+import { DEFECT_TYPE_LABELS, SEVERITY_LABELS, DEFECT_STATUSES } from '../services/defectsService';
 import { formatDate } from '../utils/date';
 import { getPhotoUrl } from '../utils/urlHelper';
 import PhotoViewerModal from './PhotoViewerModal';
+import ConfirmModal from '../components/ConfirmModal';
 
-const { width } = Dimensions.get('window');
-
-// Вспомогательные функции
 const getStatusBadge = (status) => {
   switch (status) {
     case DEFECT_STATUSES.PENDING:
@@ -25,7 +23,7 @@ const getStatusBadge = (status) => {
     case DEFECT_STATUSES.REJECTED:
       return { text: 'Отклонён', color: '#dc2626', bg: '#fef2f2', icon: 'close-circle-outline' };
     case DEFECT_STATUSES.FIXED:
-      return { text: 'Исправлен', color: '#3b82f6', bg: '#eff6ff', icon: 'construct-outline' };
+      return { text: 'Исправлен', color: '#3b82f6', bg: '#eff6ff', icon: 'checkmark-done-circle-outline' };
     default:
       return { text: status, color: '#64748b', bg: '#f1f5f9', icon: 'help-circle-outline' };
   }
@@ -49,19 +47,21 @@ const getSeverityIcon = (severity) => {
   }
 };
 
-// Компонент карточки дефекта
-const DefectCard = React.memo(({ defect, onPress, onEdit, onDelete, onPhotoPress }) => {
+const DefectCard = React.memo(({ defect, onPress, onEdit, onDelete, onMarkFixed, onPhotoPress, isActionLoading }) => {
   const statusBadge = getStatusBadge(defect.status);
   const severityColor = getSeverityColor(defect.severity);
   const severityIcon = getSeverityIcon(defect.severity);
   const firstPhoto = defect.photos?.[0];
   const isPending = defect.status === DEFECT_STATUSES.PENDING;
+  const isApproved = defect.status === DEFECT_STATUSES.APPROVED;
+  const isFixed = defect.status === DEFECT_STATUSES.FIXED;
   
   return (
     <TouchableOpacity
       style={styles.defectCard}
       onPress={() => onPress(defect)}
       activeOpacity={0.7}
+      disabled={isActionLoading}
     >
       <View style={styles.cardContent}>
         <View style={styles.defectHeader}>
@@ -88,16 +88,19 @@ const DefectCard = React.memo(({ defect, onPress, onEdit, onDelete, onPhotoPress
           <View style={styles.metaItem}>
             <Ionicons name="location-outline" size={12} color="#94a3b8" />
             <Text style={styles.metaText} numberOfLines={1}>
-              {defect.road_info?.road_name || 'Дорога не определена'}
+              {defect.road_info?.road_name || defect.road_name || 'Дорога не определена'}
             </Text>
           </View>
           <View style={styles.metaItem}>
             <Ionicons name="time-outline" size={12} color="#94a3b8" />
             <Text style={styles.metaText}>{formatDate(defect.created_at)}</Text>
           </View>
+          <View style={[styles.statusBadge, { backgroundColor: statusBadge.bg }]}>
+            <Ionicons name={statusBadge.icon} size={10} color={statusBadge.color} />
+            <Text style={[styles.statusText, { color: statusBadge.color }]}>{statusBadge.text}</Text>
+          </View>
         </View>
 
-        {/* Фото миниатюра */}
         {firstPhoto && (
           <TouchableOpacity 
             style={styles.thumbnailContainer}
@@ -117,7 +120,6 @@ const DefectCard = React.memo(({ defect, onPress, onEdit, onDelete, onPhotoPress
         )}
       </View>
       
-      {/* Кнопки действий - вынесены в отдельный контейнер справа */}
       <View style={styles.cardActions}>
         <TouchableOpacity 
           style={styles.mapButton}
@@ -128,6 +130,7 @@ const DefectCard = React.memo(({ defect, onPress, onEdit, onDelete, onPhotoPress
         >
           <Ionicons name="map-outline" size={18} color="#2563eb" />
         </TouchableOpacity>
+        
         {isPending && (
           <>
             <TouchableOpacity 
@@ -136,6 +139,7 @@ const DefectCard = React.memo(({ defect, onPress, onEdit, onDelete, onPhotoPress
                 e.stopPropagation();
                 onEdit(defect);
               }}
+              disabled={isActionLoading}
             >
               <Ionicons name="create-outline" size={18} color="#2563eb" />
             </TouchableOpacity>
@@ -145,17 +149,30 @@ const DefectCard = React.memo(({ defect, onPress, onEdit, onDelete, onPhotoPress
                 e.stopPropagation();
                 onDelete(defect);
               }}
+              disabled={isActionLoading}
             >
               <Ionicons name="trash-outline" size={18} color="#ef4444" />
             </TouchableOpacity>
           </>
+        )}
+        
+        {isApproved && !isFixed && (
+          <TouchableOpacity 
+            style={styles.fixedButton}
+            onPress={(e) => {
+              e.stopPropagation();
+              onMarkFixed(defect);
+            }}
+            disabled={isActionLoading}
+          >
+            <Ionicons name="checkmark-done-outline" size={18} color="#16a34a" />
+          </TouchableOpacity>
         )}
       </View>
     </TouchableOpacity>
   );
 });
 
-// Компонент пустого состояния
 const EmptyState = ({ onNavigateToMap }) => (
   <View style={styles.emptyState}>
     <View style={styles.emptyIconContainer}>
@@ -177,12 +194,16 @@ export default function MyDefectsScreen({ navigation }) {
   const [defects, setDefects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedDefect, setSelectedDefect] = useState(null);
-  const [modalVisible, setModalVisible] = useState(false);
   const [filter, setFilter] = useState('all');
   const [photoViewerVisible, setPhotoViewerVisible] = useState(false);
   const [photoViewerPhotos, setPhotoViewerPhotos] = useState([]);
   const [photoViewerIndex, setPhotoViewerIndex] = useState(0);
+  const [actionLoading, setActionLoading] = useState(false);
+  
+  // Состояния для модалов подтверждения
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [fixedModalVisible, setFixedModalVisible] = useState(false);
+  const [selectedDefect, setSelectedDefect] = useState(null);
 
   const fetchMyDefects = useCallback(async () => {
     if (!isAuthenticated || !user) {
@@ -223,17 +244,22 @@ export default function MyDefectsScreen({ navigation }) {
   };
 
   const handleDefectPress = (defect) => {
-    // Получаем координаты дефекта
     const coords = defect.snapped_coordinates || defect.original_coordinates;
     if (coords && coords[0]) {
-      // Передаём параметр для центрирования карты
+      let lat, lng;
+      if (Array.isArray(coords[0]) && coords[0].length === 2) {
+        lat = coords[0][1];
+        lng = coords[0][0];
+      } else if (coords.length === 2 && typeof coords[0] === 'number') {
+        lat = coords[1];
+        lng = coords[0];
+      } else {
+        Alert.alert('Ошибка', 'Не удалось определить координаты дефекта');
+        return;
+      }
+      
       navigation.navigate('Map', { 
-        centerTo: { 
-          lat: coords[0][1], 
-          lng: coords[0][0] 
-        },
-        zoom: 18,
-        disableLocationTracking: true  // Отключаем автоматическое следование за геолокацией
+        centerTo: { lat, lng, zoom: 18 }
       });
     } else {
       Alert.alert('Ошибка', 'Не удалось определить координаты дефекта');
@@ -244,28 +270,76 @@ export default function MyDefectsScreen({ navigation }) {
     navigation.navigate('EditDefect', { defectId: defect.id });
   };
 
-  const handleDefectDelete = async (defect) => {
-    Alert.alert(
-      'Удаление дефекта',
-      `Вы уверены, что хотите удалить дефект "${DEFECT_TYPE_LABELS[defect.defect_type] || defect.defect_type}"?`,
-      [
-        { text: 'Отмена', style: 'cancel' },
-        {
-          text: 'Удалить',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteDefect(defect.id);
-              Alert.alert('Успешно', 'Дефект удалён');
-              fetchMyDefects();
-            } catch (error) {
-              console.error('Delete error:', error);
-              Alert.alert('Ошибка', 'Не удалось удалить дефект');
-            }
-          }
-        }
-      ]
-    );
+  // Показать модал удаления
+  const showDeleteConfirm = (defect) => {
+    setSelectedDefect(defect);
+    setDeleteModalVisible(true);
+  };
+
+  // Показать модал отметки исправленным
+  const showFixedConfirm = (defect) => {
+    setSelectedDefect(defect);
+    setFixedModalVisible(true);
+  };
+
+  // Выполнить удаление
+  const executeDelete = async () => {
+    if (!selectedDefect) return;
+    
+    setActionLoading(true);
+    setDeleteModalVisible(false);
+    
+    try {
+      await defectsApi.delete(`/v1/defects/${selectedDefect.id}`);
+      Alert.alert('Успешно', 'Дефект удалён');
+      await fetchMyDefects();
+    } catch (error) {
+      console.error('Delete error:', error);
+      let errorMessage = 'Не удалось удалить дефект';
+      if (error.response?.status === 404) {
+        errorMessage = 'Дефект не найден';
+      } else if (error.response?.status === 403) {
+        errorMessage = 'У вас нет прав для удаления этого дефекта';
+      } else if (error.response?.data?.detail) {
+        errorMessage = typeof error.response.data.detail === 'string' 
+          ? error.response.data.detail 
+          : error.response.data.detail.message || 'Ошибка сервера';
+      }
+      Alert.alert('Ошибка', errorMessage);
+    } finally {
+      setActionLoading(false);
+      setSelectedDefect(null);
+    }
+  };
+
+  // Выполнить отметку исправленным
+  const executeMarkFixed = async () => {
+    if (!selectedDefect) return;
+    
+    setActionLoading(true);
+    setFixedModalVisible(false);
+    
+    try {
+      await defectsApi.patch(`/v1/defects/${selectedDefect.id}/update?fixed=true`);
+      Alert.alert('Успешно', 'Дефект отмечен как исправленный');
+      await fetchMyDefects();
+    } catch (error) {
+      console.error('Mark fixed error:', error);
+      let errorMessage = 'Не удалось отметить дефект как исправленный';
+      if (error.response?.status === 403) {
+        errorMessage = 'У вас нет прав для изменения этого дефекта';
+      } else if (error.response?.status === 404) {
+        errorMessage = 'Дефект не найден';
+      } else if (error.response?.data?.detail) {
+        errorMessage = typeof error.response.data.detail === 'string' 
+          ? error.response.data.detail 
+          : error.response.data.detail.message || 'Ошибка сервера';
+      }
+      Alert.alert('Ошибка', errorMessage);
+    } finally {
+      setActionLoading(false);
+      setSelectedDefect(null);
+    }
   };
 
   const handlePhotoPress = (photos, index) => {
@@ -288,6 +362,7 @@ export default function MyDefectsScreen({ navigation }) {
     pending: defects.filter(d => d.status === DEFECT_STATUSES.PENDING).length,
     approved: defects.filter(d => d.status === DEFECT_STATUSES.APPROVED).length,
     rejected: defects.filter(d => d.status === DEFECT_STATUSES.REJECTED).length,
+    fixed: defects.filter(d => d.status === DEFECT_STATUSES.FIXED).length,
   };
 
   const renderItem = useCallback(({ item }) => (
@@ -295,10 +370,12 @@ export default function MyDefectsScreen({ navigation }) {
       defect={item} 
       onPress={handleDefectPress}
       onEdit={handleEditDefect}
-      onDelete={handleDefectDelete}
+      onDelete={showDeleteConfirm}
+      onMarkFixed={showFixedConfirm}
       onPhotoPress={handlePhotoPress}
+      isActionLoading={actionLoading}
     />
-  ), []);
+  ), [actionLoading]);
 
   const keyExtractor = useCallback((item) => item.id, []);
 
@@ -380,6 +457,13 @@ export default function MyDefectsScreen({ navigation }) {
             <Text style={[styles.statLabel, filter === 'approved' && styles.statLabelActive]}>Подтверждены</Text>
           </TouchableOpacity>
           <TouchableOpacity 
+            style={[styles.statItem, filter === 'fixed' && styles.statItemActive]} 
+            onPress={() => setFilter('fixed')}
+          >
+            <Text style={[styles.statNumber, filter === 'fixed' && styles.statNumberActive, { color: '#3b82f6' }]}>{stats.fixed}</Text>
+            <Text style={[styles.statLabel, filter === 'fixed' && styles.statLabelActive]}>Исправлены</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
             style={[styles.statItem, filter === 'rejected' && styles.statItemActive]} 
             onPress={() => setFilter('rejected')}
           >
@@ -411,6 +495,43 @@ export default function MyDefectsScreen({ navigation }) {
         initialIndex={photoViewerIndex}
         onClose={() => setPhotoViewerVisible(false)}
       />
+      
+      {/* Модал подтверждения удаления */}
+      <ConfirmModal
+        visible={deleteModalVisible}
+        title="Удаление дефекта"
+        message={`Вы уверены, что хотите удалить дефект "${selectedDefect ? (DEFECT_TYPE_LABELS[selectedDefect.defect_type] || selectedDefect.defect_type) : ''}"? Это действие нельзя отменить.`}
+        onConfirm={executeDelete}
+        onCancel={() => {
+          setDeleteModalVisible(false);
+          setSelectedDefect(null);
+        }}
+        confirmText="Удалить"
+        confirmColor="#ef4444"
+        loading={actionLoading}
+      />
+      
+      {/* Модал подтверждения отметки исправленным */}
+      <ConfirmModal
+        visible={fixedModalVisible}
+        title="Отметить как исправленный"
+        message={`Подтвердите, что дефект "${selectedDefect ? (DEFECT_TYPE_LABELS[selectedDefect.defect_type] || selectedDefect.defect_type) : ''}" исправлен.`}
+        onConfirm={executeMarkFixed}
+        onCancel={() => {
+          setFixedModalVisible(false);
+          setSelectedDefect(null);
+        }}
+        confirmText="Подтвердить"
+        confirmColor="#16a34a"
+        loading={actionLoading}
+      />
+      
+      {actionLoading && (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color="#2563eb" />
+          <Text style={styles.loadingOverlayText}>Выполняется...</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -451,9 +572,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
     gap: 8,
+    flexWrap: 'wrap',
   },
   statItem: {
     flex: 1,
+    minWidth: 60,
     alignItems: 'center',
     paddingVertical: 8,
     borderRadius: 10,
@@ -534,6 +657,7 @@ const styles = StyleSheet.create({
     gap: 12, 
     marginBottom: 8,
     flexWrap: 'wrap',
+    alignItems: 'center',
   },
   metaItem: { 
     flexDirection: 'row', 
@@ -544,6 +668,18 @@ const styles = StyleSheet.create({
     fontSize: 11, 
     color: '#64748b', 
     flexShrink: 1 
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: '600',
   },
   thumbnailContainer: {
     position: 'relative',
@@ -601,6 +737,14 @@ const styles = StyleSheet.create({
     height: 32, 
     borderRadius: 16, 
     backgroundColor: '#fef2f2', 
+    justifyContent: 'center', 
+    alignItems: 'center',
+  },
+  fixedButton: { 
+    width: 32, 
+    height: 32, 
+    borderRadius: 16, 
+    backgroundColor: '#f0fdf4', 
     justifyContent: 'center', 
     alignItems: 'center',
   },
@@ -689,5 +833,22 @@ const styles = StyleSheet.create({
     marginTop: 12, 
     fontSize: 14, 
     color: '#64748b' 
+  },
+  
+  loadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  loadingOverlayText: {
+    marginTop: 12,
+    color: '#fff',
+    fontSize: 14,
   },
 });
