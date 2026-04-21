@@ -14,7 +14,11 @@
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.roaddefects.app"
+      "bundleIdentifier": "com.roaddefects.app",
+      "infoPlist": {
+        "UIBackgroundModes": ["location"],
+        "NSMicrophoneUsageDescription": "Для голосовых оповещений о дефектах"
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -23,12 +27,26 @@
       },
       "package": "com.roaddefects.app",
       "allowBackup": true,
-      "usesCleartextTraffic": true
+      "usesCleartextTraffic": true,
+      "permissions": [
+        "android.permission.VIBRATE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.ACCESS_BACKGROUND_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
       "bundler": "metro"
     },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#2563eb"
+        }
+      ]
+    ],
     "packagerOpts": {
       "hostType": "lan",
       "dev": true

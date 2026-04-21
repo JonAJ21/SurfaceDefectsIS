@@ -1,12 +1,13 @@
 // MobileApp/src/services/defectsGridService.js
 import { defectsApi } from '../config/api';
+import { proximityService } from './proximityService';
 
 const CONFIG = {
   GRID_SIZE: 0.09,
   LOAD_RADIUS_CELLS: 1,
   PRELOAD_THRESHOLD: 0.3,
   IDLE_DELAY: 500,
-  CELL_TTL: 5 * 60 * 1000,
+  CELL_TTL: 10 * 60 * 1000,
 };
 
 export const SEVERITY_COLORS = {
@@ -70,6 +71,13 @@ class DefectsGridManager {
       });
       const data = response.data || [];
       const formattedDefects = this.formatDefects(data);
+      console.log('📡 Viewport loaded:', formattedDefects.length, 'defects');
+      
+      // ВСЕГДА обновляем proximityService
+      if (formattedDefects.length > 0) {
+        proximityService.updateDefectsCache(formattedDefects);
+      }
+      
       this.notify({ type: 'viewport_loaded', defects: formattedDefects, bounds, zoom });
       return formattedDefects;
     } catch (error) {
@@ -82,13 +90,20 @@ class DefectsGridManager {
   async loadCell(lat, lng, zoom) {
     const cellKey = this.getCellKey(lat, lng);
     const bounds = this.getCellBounds(lat, lng);
+    
     if (this.loadedCells.has(cellKey)) {
       const { timestamp, defects } = this.loadedCells.get(cellKey);
       if (Date.now() - timestamp < CONFIG.CELL_TTL) {
+        console.log(`📦 Cache hit for cell ${cellKey}: ${defects?.length || 0} defects`);
+        // ВАЖНО: при кэше тоже обновляем proximityService
+        if (defects && defects.length > 0) {
+          proximityService.updateDefectsCache(defects);
+        }
         this.notify({ type: 'cell_cached', cell: cellKey, defects });
         return defects;
       }
     }
+    
     this.notify({ type: 'loading_cell', cell: cellKey });
     try {
       const limit = zoom > 16 ? 300 : 500;
@@ -104,7 +119,19 @@ class DefectsGridManager {
       });
       const data = response.data || [];
       const formattedDefects = this.formatDefects(data);
-      this.loadedCells.set(cellKey, { defects: formattedDefects, timestamp: Date.now(), bounds });
+      console.log(`📡 Cell ${cellKey} loaded: ${formattedDefects.length} defects`);
+      
+      this.loadedCells.set(cellKey, { 
+        defects: formattedDefects, 
+        timestamp: Date.now(), 
+        bounds 
+      });
+      
+      // ВСЕГДА обновляем proximityService
+      if (formattedDefects.length > 0) {
+        proximityService.updateDefectsCache(formattedDefects);
+      }
+      
       this.notify({ type: 'cell_loaded', cell: cellKey, defects: formattedDefects, bounds });
       return formattedDefects;
     } catch (error) {
@@ -115,12 +142,15 @@ class DefectsGridManager {
   }
 
   formatDefects(data) {
-    return data.map(d => {
+    if (!data || data.length === 0) return [];
+    
+    const formatted = data.map(d => {
       let coords = d.snapped_coordinates || d.original_coordinates;
       let isLine = false;
       let coordinates = null;
       let centerLat = null;
       let centerLon = null;
+      
       if (coords && Array.isArray(coords)) {
         if (coords.length >= 2 && Array.isArray(coords[0]) && coords[0].length === 2) {
           isLine = true;
@@ -137,6 +167,9 @@ class DefectsGridManager {
           centerLon = coords[0][0];
         }
       }
+      
+      if (!centerLat || !centerLon) return null;
+      
       return {
         id: d.id,
         lat: centerLat,
@@ -151,53 +184,78 @@ class DefectsGridManager {
         created_at: d.created_at,
         color: SEVERITY_COLORS[d.severity] || SEVERITY_COLORS.low
       };
-    }).filter(d => {
-      if (d.geometry_type === 'linestring') return d.coordinates && d.coordinates.length >= 2;
-      return d.lat && d.lon;
-    });
+    }).filter(d => d !== null);
+    
+    console.log(`📊 Formatted ${formatted.length} defects with valid coordinates`);
+    return formatted;
   }
 
   async loadArea(centerLat, centerLng, zoom, force = false) {
     if (this.isLoading && !force) return;
+    
     const centerCell = this.getCellKey(centerLat, centerLng);
     const cellCenter = this.getCellCenter(centerLat, centerLng);
     const distanceToCenter = this.getDistance(centerLat, centerLng, cellCenter.lat, cellCenter.lng);
     const shouldLoad = force || this.currentCenterCell !== centerCell || distanceToCenter > CONFIG.GRID_SIZE * 111000 * CONFIG.PRELOAD_THRESHOLD;
-    if (!shouldLoad) return;
+    
+    if (!shouldLoad) {
+      console.log(`⏭️ Skipping area load - cell ${centerCell} already loaded`);
+      return null;
+    }
+    
     this.currentCenterCell = centerCell;
     this.currentZoom = zoom;
     this.isLoading = true;
+    
     const [latCell, lngCell] = centerCell.split(',').map(Number);
     const cellsToLoad = [];
     const radius = CONFIG.LOAD_RADIUS_CELLS;
+    
     for (let i = -radius; i <= radius; i++) {
       for (let j = -radius; j <= radius; j++) {
         cellsToLoad.push(`${latCell + i},${lngCell + j}`);
       }
     }
+    
+    console.log(`📌 Loading ${cellsToLoad.length} cells around ${centerCell}`);
     this.notify({ type: 'loading_area', cells: cellsToLoad });
+    
     const loadPromises = cellsToLoad.map(cell => {
       const [lat, lng] = cell.split(',').map(Number);
       const cellLat = lat * CONFIG.GRID_SIZE + CONFIG.GRID_SIZE / 2;
       const cellLng = lng * CONFIG.GRID_SIZE + CONFIG.GRID_SIZE / 2;
       return this.loadCell(cellLat, cellLng, zoom);
     });
+    
     const results = await Promise.all(loadPromises);
     const uniqueDefects = new Map();
+    
     for (const defects of results) {
       if (defects) {
         for (const defect of defects) {
-          if (!uniqueDefects.has(defect.id)) uniqueDefects.set(defect.id, defect);
+          if (!uniqueDefects.has(defect.id)) {
+            uniqueDefects.set(defect.id, defect);
+          }
         }
       }
     }
+    
     const allDefects = Array.from(uniqueDefects.values());
+    console.log(`📦 Area loaded: ${allDefects.length} unique defects from ${cellsToLoad.length} cells`);
+    
+    // Обновляем proximityService всеми дефектами области
+    if (allDefects.length > 0) {
+      proximityService.updateDefectsCache(allDefects);
+    }
+    
     this.notify({ type: 'area_loaded', defects: allDefects, cells: cellsToLoad, centerCell, zoom });
     this.isLoading = false;
     return allDefects;
   }
 
   async smartLoad(centerLat, centerLng, zoom, bounds = null) {
+    console.log(`🎯 SmartLoad: center=${centerLat},${centerLng}, zoom=${zoom}`);
+    
     if (zoom < 12 && bounds) {
       return this.loadViewport(bounds, zoom);
     } else {
@@ -216,17 +274,25 @@ class DefectsGridManager {
     const R = 6371000;
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLng = (lng2 - lng1) * Math.PI / 180;
-    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + 
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+              Math.sin(dLng / 2) * Math.sin(dLng / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
   }
 
   clearCache() {
     this.loadedCells.clear();
+    proximityService.clearCache();
+    console.log('🗑️ Grid cache cleared');
   }
 
   getStats() {
-    return { loadedCells: this.loadedCells.size, currentCell: this.currentCenterCell, currentZoom: this.currentZoom };
+    return { 
+      loadedCells: this.loadedCells.size, 
+      currentCell: this.currentCenterCell, 
+      currentZoom: this.currentZoom 
+    };
   }
 }
 

@@ -9,12 +9,15 @@ import {
   Text, 
   Animated, 
   Dimensions,
-  ActivityIndicator
+  ActivityIndicator,
+  Switch,
+  Modal
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
 import { getDefectById, DEFECT_TYPE_LABELS, SEVERITY_LABELS, snapPoint } from '../services/defectsService';
 import { defectsGrid, SEVERITY_COLORS } from '../services/defectsGridService';
+import { proximityService } from '../services/proximityService';
 import { WebViewMessageTypes, ReactToWebViewTypes } from '../assets/map/map-bridge';
 import * as Location from 'expo-location';
 import { useAuth } from '../context/AuthContext';
@@ -22,7 +25,6 @@ import { formatDate } from '../utils/date';
 
 const { width, height } = Dimensions.get('window');
 
-// Компонент попапа дефекта
 const DefectPopup = ({ visible, defect, onClose, onNavigate }) => {
   if (!defect || !visible) return null;
 
@@ -80,7 +82,6 @@ const DefectPopup = ({ visible, defect, onClose, onNavigate }) => {
   );
 };
 
-// Компонент Toast уведомлений
 const Toast = ({ visible, message, type, onHide }) => {
   const opacity = useRef(new Animated.Value(0)).current;
 
@@ -104,8 +105,12 @@ const Toast = ({ visible, message, type, onHide }) => {
 
   if (!visible) return null;
 
-  const backgroundColor = type === 'success' ? '#22c55e' : type === 'error' ? '#ef4444' : '#3b82f6';
-  const icon = type === 'success' ? 'checkmark-circle' : type === 'error' ? 'alert-circle' : 'information-circle';
+  const backgroundColor = type === 'success' ? '#22c55e' : 
+                         type === 'error' ? '#ef4444' : 
+                         type === 'warning' ? '#f59e0b' : '#3b82f6';
+  const icon = type === 'success' ? 'checkmark-circle' : 
+               type === 'error' ? 'alert-circle' : 
+               type === 'warning' ? 'warning' : 'information-circle';
 
   return (
     <Animated.View style={[styles.toast, { backgroundColor, opacity }]}>
@@ -225,9 +230,6 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
         var isFirstFix = true;
         var lastBoundsSent = null;
         var lastCenterSent = null;
-        
-        // Хранилище для линий (для отображения при приближении)
-        var allLines = [];
 
         function getMapBounds() {
           var bounds = map.getBounds();
@@ -488,16 +490,15 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
             }
             
             if (data.type === 'SET_DEFECTS' && Array.isArray(data.payload)) {
-              // Сохраняем все линии
-              allLines = [];
               var pointFeatures = [];
+              var lineFeatures = [];
               
               data.payload.forEach(defect => {
                 if (defect.geometry_type === 'linestring' && defect.coordinates && defect.coordinates.length >= 2) {
-                  // Сохраняем линию для отображения при приближении
-                  allLines.push({
+                  var lineCoords = defect.coordinates.map(coord => [parseFloat(coord[0]), parseFloat(coord[1])]);
+                  lineFeatures.push({
                     type: 'Feature',
-                    geometry: { type: 'LineString', coordinates: defect.coordinates.map(coord => [parseFloat(coord[0]), parseFloat(coord[1])]) },
+                    geometry: { type: 'LineString', coordinates: lineCoords },
                     properties: {
                       id: defect.id,
                       type: defect.type,
@@ -510,27 +511,7 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
                       color: defect.color
                     }
                   });
-                  
-                  // Добавляем центр линии как точку для кластеризации
-                  var center = defect.coordinates[Math.floor(defect.coordinates.length / 2)];
-                  pointFeatures.push({
-                    type: 'Feature',
-                    geometry: { type: 'Point', coordinates: [parseFloat(center[0]), parseFloat(center[1])] },
-                    properties: {
-                      id: defect.id,
-                      type: defect.type,
-                      description: defect.description,
-                      road_name: defect.road_name,
-                      severity: defect.severity,
-                      defect_type: defect.defect_type,
-                      created_at: defect.created_at,
-                      status: defect.status,
-                      color: defect.color,
-                      isLine: true
-                    }
-                  });
                 } else if (defect.lat && defect.lon) {
-                  // Точечный дефект
                   pointFeatures.push({
                     type: 'Feature',
                     geometry: { type: 'Point', coordinates: [parseFloat(defect.lon), parseFloat(defect.lat)] },
@@ -543,21 +524,21 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
                       defect_type: defect.defect_type,
                       created_at: defect.created_at,
                       status: defect.status,
-                      color: defect.color,
-                      isLine: false
+                      color: defect.color
                     }
                   });
                 }
               });
               
-              // Обновляем источник точек (для кластеризации)
               var pointsSource = map.getSource('defects-points');
               if (pointsSource) {
                 pointsSource.setData({ type: 'FeatureCollection', features: pointFeatures });
               }
               
-              // Обновляем линии (отображаются только при достаточном приближении)
-              updateLinesByZoom();
+              var linesSource = map.getSource('defect-lines');
+              if (linesSource) {
+                linesSource.setData({ type: 'FeatureCollection', features: lineFeatures });
+              }
               
               return;
             }
@@ -601,33 +582,6 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
 
         if (document.addEventListener) document.addEventListener('message', handleMessage, false);
         if (window.addEventListener) window.addEventListener('message', handleMessage, false);
-        
-        // Функция обновления линий в зависимости от зума
-        function updateLinesByZoom() {
-          var currentZoom = map.getZoom();
-          var linesSource = map.getSource('defect-lines');
-          
-          if (linesSource) {
-            if (currentZoom >= 14) {
-              // При большом зуме показываем все линии
-              linesSource.setData({ type: 'FeatureCollection', features: allLines });
-            } else {
-              // При маленьком зуме показываем только линии в видимой области
-              var bounds = map.getBounds();
-              if (bounds && allLines.length > 0) {
-                var visibleLines = allLines.filter(line => {
-                  var coords = line.geometry.coordinates;
-                  return coords.some(coord => 
-                    bounds.contains([coord[0], coord[1]])
-                  );
-                });
-                linesSource.setData({ type: 'FeatureCollection', features: visibleLines });
-              } else {
-                linesSource.setData({ type: 'FeatureCollection', features: [] });
-              }
-            }
-          }
-        }
 
         function updateLocation(lng, lat, speed) {
           currentSpeed = speed;
@@ -663,7 +617,6 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
         }
 
         map.on('load', function() {
-          // Источник для точек с кластеризацией
           map.addSource('defects-points', { 
             type: 'geojson', 
             data: { type: 'FeatureCollection', features: [] }, 
@@ -672,7 +625,6 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
             clusterRadius: 50 
           });
           
-          // Кластеры
           map.addLayer({ 
             id: 'defects-clusters', 
             type: 'circle', 
@@ -690,7 +642,6 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
             } 
           });
           
-          // Счётчик на кластере
           map.addLayer({ 
             id: 'defects-count', 
             type: 'symbol', 
@@ -704,7 +655,6 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
             paint: { 'text-color': '#fff' } 
           });
           
-          // Отдельные точки (некластеризованные)
           map.addLayer({ 
             id: 'defects-points-layer', 
             type: 'circle', 
@@ -719,18 +669,15 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
             } 
           });
           
-          // Источник для линий
           map.addSource('defect-lines', { 
             type: 'geojson', 
             data: { type: 'FeatureCollection', features: [] }
           });
           
-          // Слой для линий (показывается только при зуме >= 14)
           map.addLayer({
             id: 'defect-lines-layer',
             type: 'line',
             source: 'defect-lines',
-            minzoom: 14,
             paint: {
               'line-color': ['get', 'color'],
               'line-width': 4,
@@ -738,7 +685,6 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
             }
           });
           
-          // Клик по кластеру
           map.on('click', 'defects-clusters', function(e) {
             var features = map.queryRenderedFeatures(e.point, { layers: ['defects-clusters'] });
             var clusterId = features[0].properties.cluster_id;
@@ -751,7 +697,6 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
             });
           });
           
-          // Клик по точке
           map.on('click', 'defects-points-layer', function(e) {
             var props = e.features[0].properties;
             var coords = e.features[0].geometry.coordinates;
@@ -771,7 +716,6 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
             }
           });
           
-          // Клик по линии
           map.on('click', 'defect-lines-layer', function(e) {
             var props = e.features[0].properties;
             var coords = e.features[0].geometry.coordinates;
@@ -802,11 +746,6 @@ const getMapHTML = (baseUrl, initialCenter = [37.6, 55.6]) => {
           map.on('moveend', function() {
             getMapBounds();
             getMapCenter();
-            updateLinesByZoom();
-          });
-          
-          map.on('zoomend', function() {
-            updateLinesByZoom();
           });
           
           getMapBounds();
@@ -837,12 +776,22 @@ export default function MapScreen({ navigation, route }) {
   const [selectedDefect, setSelectedDefect] = useState(null);
   const [popupVisible, setPopupVisible] = useState(false);
   const { user, isVerified } = useAuth();
+  
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [severityFilter, setSeverityFilter] = useState({
+    critical: true,
+    high: true,
+    medium: true,
+    low: true,
+  });
+  const [showNotificationSettings, setShowNotificationSettings] = useState(false);
 
   const locationSubscription = useRef(null);
   const lastPosRef = useRef(null);
   const pendingCenterRef = useRef(null);
   const loadTimeoutRef = useRef(null);
   const currentBoundsRef = useRef(null);
+  const firstPositionReceived = useRef(false);
 
   const showToast = useCallback((message, type = 'info') => {
     setToast({ visible: true, message, type });
@@ -876,7 +825,27 @@ export default function MapScreen({ navigation, route }) {
     }
   }, []);
 
-  // Подписка на обновления от grid менеджера
+  useEffect(() => {
+    const initNotifications = async () => {
+      await proximityService.init();
+      proximityService.startMonitoring((notification) => {
+        const severityIcon = notification.defect.severity === 'critical' ? '⚠️' :
+                            notification.defect.severity === 'high' ? '🔴' :
+                            notification.defect.severity === 'medium' ? '🟡' : '🟢';
+        showToast(`${severityIcon} ${notification.defect.type}\n${Math.round(notification.distance)} м, ${notification.timeToDefect} сек`, 'warning');
+      });
+      
+      proximityService.setEnabled(notificationsEnabled);
+      proximityService.setSeverityFilter(severityFilter);
+    };
+    
+    initNotifications();
+    
+    return () => {
+      proximityService.stopMonitoring();
+    };
+  }, []);
+
   useEffect(() => {
     const unsubscribe = defectsGrid.subscribe((data) => {
       if (data.type === 'loading' || data.type === 'loading_cell' || data.type === 'loading_area') {
@@ -913,7 +882,6 @@ export default function MapScreen({ navigation, route }) {
     return unsubscribe;
   }, [sendToMap, showToast, defects]);
 
-  // Отслеживание геолокации
   const startLocationTracking = useCallback(async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -933,12 +901,24 @@ export default function MapScreen({ navigation, route }) {
           lastPosRef.current = { lat: latitude, lon: longitude, timestamp };
           setCurrentSpeed(Math.round(calcSpeed));
           
+          proximityService.updatePosition(
+            { lat: latitude, lng: longitude },
+            calcSpeed
+          );
+          
           sendToMap(ReactToWebViewTypes.SET_USER_LOCATION, { 
             lat: latitude, 
             lng: longitude, 
             speed: Math.round(calcSpeed) 
           });
           setUserLocation({ lat: latitude, lng: longitude, speed: Math.round(calcSpeed) });
+          
+          if (!firstPositionReceived.current && latitude && longitude) {
+            firstPositionReceived.current = true;
+            setTimeout(() => {
+              defectsGrid.smartLoad(latitude, longitude, currentZoom, currentBoundsRef.current);
+            }, 1000);
+          }
         }
       );
     } catch (e) {
@@ -947,9 +927,8 @@ export default function MapScreen({ navigation, route }) {
     } finally { 
       setLoading(false); 
     }
-  }, [sendToMap, showToast]);
+  }, [sendToMap, showToast, currentZoom]);
 
-  // Обработка сообщений от карты
   const handleMapMessage = useCallback(async (data) => {
     try {
       if (typeof data !== 'string') return;
@@ -1079,7 +1058,6 @@ export default function MapScreen({ navigation, route }) {
     }
   }, [startLocationTracking, userLocation, navigation, sendToMap, drawPoints.length, showToast, defects, currentZoom]);
 
-  // Обработка параметров навигации
   useEffect(() => {
     if (route.params?.centerTo) {
       const { lat, lng, zoom = 18 } = route.params.centerTo;
@@ -1093,7 +1071,6 @@ export default function MapScreen({ navigation, route }) {
     }
   }, [route.params, mapReady, sendToMap, showToast]);
 
-  // Web listener
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const listener = (e) => handleMapMessage(e.data);
@@ -1101,7 +1078,6 @@ export default function MapScreen({ navigation, route }) {
     return () => window.removeEventListener('message', listener);
   }, [handleMapMessage]);
 
-  // Cleanup
   useEffect(() => { 
     const subscription = locationSubscription.current;
     return () => { 
@@ -1118,7 +1094,6 @@ export default function MapScreen({ navigation, route }) {
     }; 
   }, []);
 
-  // Функции UI
   const startDrawing = () => {
     if (!user || !isVerified) {
       Alert.alert(
@@ -1234,6 +1209,13 @@ export default function MapScreen({ navigation, route }) {
       </TouchableOpacity>
 
       <TouchableOpacity 
+        style={styles.notificationSettingsButton} 
+        onPress={() => setShowNotificationSettings(true)}
+      >
+        <Ionicons name="notifications-circle-outline" size={26} color="#2563eb" />
+      </TouchableOpacity>
+
+      <TouchableOpacity 
         style={[styles.fab, drawMode && styles.fabActive]} 
         onPress={drawMode ? disableDrawMode : startDrawing}
       >
@@ -1303,6 +1285,69 @@ export default function MapScreen({ navigation, route }) {
         type={toast.type} 
         onHide={() => setToast(prev => ({ ...prev, visible: false }))} 
       />
+
+      <Modal
+        visible={showNotificationSettings}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowNotificationSettings(false)}
+      >
+        <View style={styles.settingsOverlay}>
+          <View style={styles.settingsContainer}>
+            <View style={styles.settingsHeader}>
+              <Text style={styles.settingsTitle}>Настройки уведомлений</Text>
+              <TouchableOpacity onPress={() => setShowNotificationSettings(false)}>
+                <Ionicons name="close" size={24} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.settingItem}>
+              <View style={styles.settingInfo}>
+                <Ionicons name="notifications" size={22} color="#2563eb" />
+                <Text style={styles.settingLabel}>Уведомления</Text>
+              </View>
+              <Switch
+                value={notificationsEnabled}
+                onValueChange={(value) => {
+                  setNotificationsEnabled(value);
+                  proximityService.setEnabled(value);
+                }}
+                trackColor={{ false: '#e2e8f0', true: '#86efac' }}
+                thumbColor={notificationsEnabled ? '#166534' : '#f4f4f5'}
+              />
+            </View>
+            
+            <Text style={styles.settingsSubtitle}>Фильтр по опасности</Text>
+            
+            {Object.entries(severityFilter).map(([key, value]) => (
+              <View key={key} style={styles.settingItem}>
+                <View style={styles.settingInfo}>
+                  <View style={[styles.severityDot, { backgroundColor: 
+                    key === 'critical' ? '#dc2626' :
+                    key === 'high' ? '#f97316' :
+                    key === 'medium' ? '#f59e0b' : '#22c55e'
+                  }]} />
+                  <Text style={styles.settingLabel}>{SEVERITY_LABELS[key]}</Text>
+                </View>
+                <Switch
+                  value={value}
+                  onValueChange={(newValue) => {
+                    const newFilter = { ...severityFilter, [key]: newValue };
+                    setSeverityFilter(newFilter);
+                    proximityService.setSeverityFilter(newFilter);
+                  }}
+                  trackColor={{ false: '#e2e8f0', true: '#86efac' }}
+                  thumbColor={value ? '#166534' : '#f4f4f5'}
+                />
+              </View>
+            ))}
+            
+            <TouchableOpacity style={styles.settingsCloseBtn} onPress={() => setShowNotificationSettings(false)}>
+              <Text style={styles.settingsCloseText}>Закрыть</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1398,6 +1443,26 @@ const styles = StyleSheet.create({
     width: 48, 
     height: 48, 
     borderRadius: 24, 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    elevation: 4, 
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 2 }, 
+    shadowOpacity: 0.1, 
+    shadowRadius: 4, 
+    zIndex: 60, 
+    borderWidth: 1, 
+    borderColor: '#e2e8f0' 
+  },
+  
+  notificationSettingsButton: { 
+    position: 'absolute', 
+    bottom: 160, 
+    right: 16, 
+    width: 44, 
+    height: 44, 
+    borderRadius: 22, 
+    backgroundColor: '#fff', 
     justifyContent: 'center', 
     alignItems: 'center', 
     elevation: 4, 
@@ -1642,5 +1707,66 @@ const styles = StyleSheet.create({
     fontWeight: '500', 
     flex: 1, 
     textAlign: 'center' 
+  },
+  
+  settingsOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  settingsContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 20,
+    width: '85%',
+    maxWidth: 340,
+  },
+  settingsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  settingsTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  settingsSubtitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#334155',
+    marginTop: 16,
+    marginBottom: 12,
+  },
+  settingItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  settingInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  settingLabel: {
+    fontSize: 15,
+    color: '#0f172a',
+  },
+  settingsCloseBtn: {
+    backgroundColor: '#2563eb',
+    padding: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  settingsCloseText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 15,
   },
 });
