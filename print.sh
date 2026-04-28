@@ -1,4 +1,4 @@
-directory="MobileApp/src/"
+directory="./modern-g7-32-main"
 
 if [ -d "$directory" ]; then
     echo "Содержимое директории $directory:"
