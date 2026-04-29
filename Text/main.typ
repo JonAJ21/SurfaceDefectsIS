@@ -27,5 +27,6 @@
 
 #bibliography("ref.bib")
 
-// #show: appendixes
-// #include "appendices/appendix-a.typ"
+#show: appendixes
+#include "appendices/appendix-a.typ"
+#include "appendices/appendix-b.typ"
