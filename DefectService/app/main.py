@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from typing import Any, Callable
 
+from prometheus_fastapi_instrumentator import Instrumentator
 # from redis.asyncio.client import Redis
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,6 +37,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Defects Service",
         docs_url="/api/docs",
+        openapi_url="/openapi.json",
         description="Defects Service",
         # lifespan=lifespan
     )
@@ -52,5 +54,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    
+    Instrumentator().instrument(app).expose(app)
     
     return app

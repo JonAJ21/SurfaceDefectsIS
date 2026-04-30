@@ -4,6 +4,7 @@ from typing import Any, Callable
 from redis.asyncio.client import Redis
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from infrastructure.database import redis
 from core.config.settings import settings
@@ -38,6 +39,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Auth Service",
         docs_url="/api/docs",
+        openapi_url="/openapi.json",
         description="Auth Service",
         lifespan=lifespan
     )
@@ -50,10 +52,12 @@ def create_app() -> FastAPI:
     
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:19006", "http://localhost:8081", "exp://"], # Expo DevTools + Web
+        allow_origins=["http://localhost:19006", "http://localhost:8081", "exp://", "http://localhost", "http://localhost:80"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    
+    Instrumentator().instrument(app).expose(app)
     
     return app
