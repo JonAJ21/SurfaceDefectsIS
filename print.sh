@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-DIRECTORY="./DefectService/app"
+DIRECTORY="./MobileApp/src"
 
 # === НАСТРОЙКИ ИГНОРИРОВАНИЯ ===
 # 📁 Директории (рекурсивно пропускаются целиком)
