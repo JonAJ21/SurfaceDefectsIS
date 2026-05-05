@@ -1,10 +1,23 @@
 #import "@preview/modern-g7-32:0.2.0": gost, abstract, appendixes
 
+#set heading(numbering: "1.1")
+#show heading: it => {
+  if it.level <= 3 {
+    set align(center)
+    it
+  } else {
+    it
+  }
+}
+
+
 #show: gost.with(
   hide-title: true,
   city: "Москва",
   year: 2026,
 )
+
+#counter(page).update(2)
 
 #abstract(
   "информирование водителей",

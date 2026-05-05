@@ -301,7 +301,56 @@
 
 Сравнение основных характеристик in-memory систем представлено в таблице 6.
 
+// #figure(
+//   table(
+//     columns: (auto, auto, auto, auto),
+//     table.header(
+//       [Характеристика],
+//       [Memcached],
+//       [Redis],
+//       [Tarantool],
+//     ),
+//     [Компания разработчика], [Danga Interactive], [Redis Labs], [VK],
+//     [Лицензия], [Open Source (BSD)], [Open Source (Redis Source Available License v2)], [Open Source (BSD)],
+//     [Открытый исходный код], [Да], [Да], [Да],
+//     [Тип базы данных], [Ключ-значение], [Ключ-значение], [Мульти- модальная ключ-значение],
+//     [Режимы хранения], [Оперативная память], [Оперативная память], [Оперативная память],
+//     [Транзакции], [Нет], [Да], [Да],
+//   ),
+//   caption: [Сравнение in-memory систем управления базами данных],
+// ) <table_cache>
+
+// #table(
+//   columns: (auto, auto, auto, auto),
+//   stroke: 0.75pt,
+//   table.header(
+//     [Характеристика],
+//     [Memcached],
+//     [Redis],
+//     [Tarantool],
+//   ),
+//   [Компания разработчика], [Danga Interactive], [Redis Labs], [VK],
+//   [Лицензия], [Open Source (BSD)], [Open Source (Redis Source Available License v2)], [Open Source (BSD)],
+//   caption: [Сравнение in-memory систем управления базами данных],
+// ) <table_cache>
+
 #figure(
+  table(
+    columns: (auto, auto, auto, auto),
+    stroke: 0.75pt,
+    table.header([Характеристика], [Memcached], [Redis], [Tarantool]),
+    [Компания разработчика], [Danga Interactive], [Redis Labs], [VK],
+    [Лицензия], [Open Source (BSD)], [Open Source (Redis Source Available License v2)], [Open Source (BSD)],
+  ),
+  kind: table,
+  caption: [Сравнение in-memory систем управления базами данных],
+) <table_cache>
+
+
+#counter(figure.where(kind: table)).update(5)
+#figure(
+  supplement: "Продолжение таблицы",
+  caption: [Сравнение in-memory систем управления базами данных],
   table(
     columns: (auto, auto, auto, auto),
     table.header(
@@ -310,15 +359,12 @@
       [Redis],
       [Tarantool],
     ),
-    [Компания разработчика], [Danga Interactive], [Redis Labs], [VK],
-    [Лицензия], [Open Source (BSD)], [Open Source (Redis Source Available License v2)], [Open Source (BSD)],
     [Открытый исходный код], [Да], [Да], [Да],
     [Тип базы данных], [Ключ-значение], [Ключ-значение], [Мультидомальная, ключ-значение],
     [Режимы хранения], [Оперативная память], [Оперативная память], [Оперативная память],
     [Транзакции], [Нет], [Да], [Да],
   ),
-  caption: [Сравнение in-memory систем управления базами данных],
-) <table_cache>
+) <table_cache_part2>
 
 === Анализ инструментов мониторинга
 
