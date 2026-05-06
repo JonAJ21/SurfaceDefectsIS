@@ -1,3 +1,5 @@
+import json
+import redis.asyncio as redis
 from datetime import datetime, timedelta
 from typing import List, Tuple
 
@@ -9,15 +11,43 @@ from domain.repositories.uow import BaseUnitOfWork
 from application.usecases.base import BaseUseCase
 from core.config.settings import settings
 
+
 class BaseDefectCreateUseCase(BaseUseCase[DefectCreateRequestDTO, DefectCreateResponseDTO]):
     ...
     
+
 class DefectCreateUseCase(BaseDefectCreateUseCase):
     def __init__(
         self,
         uow: BaseUnitOfWork
     ):
         self.uow = uow
+        self._redis_client = None
+    
+    async def _get_redis_client(self) -> redis.Redis:
+        if self._redis_client is None:
+            self._redis_client = await redis.from_url(
+                f"redis://{settings.redis_host}:{settings.redis_port}",
+                decode_responses=True
+            )
+        return self._redis_client
+    
+    async def _publish_to_detection_stream(self, defect_id: str, photo_path: str) -> None:
+        """Публикация сообщения в Redis Streams для сервиса детекции"""
+        try:
+            redis_client = await self._get_redis_client()
+            stream_name = "defect:detection"
+            
+            message_id = await redis_client.xadd(
+                stream_name,
+                {
+                    "defect_id": defect_id,
+                    "photo_path": photo_path,
+                }
+            )
+            print(f"Published defect {defect_id} to stream {stream_name}, message_id: {message_id}")
+        except Exception as e:
+            print(f"Failed to publish to stream: {e}")
     
     async def _check_duplicate(
         self,
@@ -25,9 +55,8 @@ class DefectCreateUseCase(BaseDefectCreateUseCase):
         geometry_type: GeometryType,
         distance_tolerance_meters: float = 10
     ) -> bool:
-        """Проверяет, существует ли похожий дефект в том же месте (без учёта времени)"""
+        """Проверяет, существует ли похожий дефект в том же месте"""
         
-        # Определяем центр дефекта
         if geometry_type == GeometryType.POINT:
             center_lon = coordinates[0][0]
             center_lat = coordinates[0][1]
@@ -39,25 +68,17 @@ class DefectCreateUseCase(BaseDefectCreateUseCase):
         center = Coordinate(center_lon, center_lat)
         radius = Distance(distance_tolerance_meters)
         
-        # Ищем дефекты в радиусе
         nearby_defects = await self.uow.defects.find_nearby(
             center=center,
             radius=radius
         )
         
         for defect in nearby_defects:
-            # Для точечных - проверяем расстояние
             if geometry_type == GeometryType.POINT:
                 defect_center = defect.center
                 distance = center.distance_to(defect_center)
                 if distance <= distance_tolerance_meters:
-                    # Найден дубликат!
                     return True
-            # else:
-            #     # Для линейных - проверяем тип
-            #     if defect.geometry_type == GeometryType.LINESTRING:
-            #         # Можно добавить проверку пересечения
-            #         return True
         
         return False
     
@@ -94,10 +115,8 @@ class DefectCreateUseCase(BaseDefectCreateUseCase):
         if len(coordinates) < 2:
             raise ValueError("Linestring must have at least 2 points")
         
-        # Преобразуем в Coordinate объекты
         points = [Coordinate(lon, lat) for lon, lat in coordinates]
         
-        # Привязываем первую точку
         first_point = points[0]
         first_result = await self.uow.roads.snap_point_to_road(
             first_point.longitude, first_point.latitude, max_distance_meters
@@ -116,7 +135,6 @@ class DefectCreateUseCase(BaseDefectCreateUseCase):
             distance_to_road=first_result["distance_meters"]
         )
         
-        # Привязываем остальные точки к той же дороге
         for point in points[1:]:
             result = await self.uow.roads.snap_point_to_road(
                 point.longitude, point.latitude, max_distance_meters
@@ -126,7 +144,6 @@ class DefectCreateUseCase(BaseDefectCreateUseCase):
                 snapped_points.append([result["snapped_lon"], result["snapped_lat"]])
                 total_distance += result["distance_meters"]
             else:
-                # Если точка далеко от дороги, оставляем исходную
                 snapped_points.append([point.longitude, point.latitude])
                 total_distance += max_distance_meters
         
@@ -136,12 +153,10 @@ class DefectCreateUseCase(BaseDefectCreateUseCase):
     
     async def execute(self, request: DefectCreateRequestDTO) -> DefectCreateResponseDTO:
         async with self.uow as uow:
-            # 1. Проверяем на дубликат и создаем
             is_duplicate = await self._check_duplicate(
                 coordinates=request.coordinates,
                 geometry_type=request.geometry_type,
-                #time_window_minutes=settings.duplicate_time_window_minutes,  # Проверяем дефекты за последние 5 минут
-                distance_tolerance_meters=settings.duplicate_distance_tolerance_meters  # В радиусе 10 метров
+                distance_tolerance_meters=settings.duplicate_distance_tolerance_meters
             )
             
             if is_duplicate:
@@ -151,16 +166,15 @@ class DefectCreateUseCase(BaseDefectCreateUseCase):
                 )
             
             defect = RoadDefect(
-                        defect_type=request.defect_type,
-                        severity=request.severity,
-                        geometry_type=request.geometry_type,
-                        original_coordinates=request.coordinates,
-                        created_by=request.created_by,
-                        description=request.description,
-                    )
-            max_distance = settings.max_distance_meters
+                defect_type=request.defect_type,
+                severity=request.severity,
+                geometry_type=request.geometry_type,
+                original_coordinates=request.coordinates,
+                created_by=request.created_by,
+                description=request.description,
+            )
+            max_distance = request.max_distance_meters
             
-            # 2. Привязываем к дороге
             if request.geometry_type == GeometryType.POINT:
                 snapped_coords, road_info, distance = await self._snap_point(
                     request.coordinates, max_distance
@@ -176,33 +190,29 @@ class DefectCreateUseCase(BaseDefectCreateUseCase):
                 distance=distance
             )
             
-            # 3. Загружаем фотографии в MinIO (используем уже существующий ID)
             photo_urls = []
             for photo in request.photos:
                 url = await uow.photos.upload(
-                    defect_id=str(defect.id),  # ID уже есть!
+                    defect_id=str(defect.id),
                     filename=photo.filename,
                     data=photo.data,
                     content_type=photo.content_type
                 )
                 photo_urls.append(url)
             
-            # 4. Добавляем фото к дефекту
             defect.photos = photo_urls
-            
-            # 5. Валидация перед отправкой
             defect.validate_for_submission()
             
-            # 6. Для линейных дефектов вычисляем длину
             length_meters = None
             if defect.geometry_type == GeometryType.LINESTRING:
                 length_meters = defect.length
             
-            # 7. Сохраняем дефект ОДИН РАЗ 
             saved_defect = await uow.defects.save(defect)
             await uow.commit()
             
-            # 8. Формируем ответ
+            for photo_url in photo_urls:
+                await self._publish_to_detection_stream(str(saved_defect.id), photo_url)
+            
             road_info_response = None
             if saved_defect.road_info:
                 road_info_response = RoadInfoResponseDTO(
