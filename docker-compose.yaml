@@ -140,6 +140,22 @@ services:
     networks:
       - backend
 
+  defects-detection-service:
+    container_name: defects-detection-service
+    build: 
+      context: ./DefectDetectionService
+      dockerfile: Dockerfile
+    command: "python main.py"
+    volumes:
+      - ./DefectDetectionService/app:/app
+    env_file:
+      - ".env"
+    restart: unless-stopped
+    depends_on:
+      - defects-redis
+    networks:
+      - backend
+
   nginx:
     image: nginx:alpine
     container_name: nginx
@@ -184,8 +200,6 @@ services:
     depends_on:
       - prometheus
 
-
-  
 networks:
   backend:
     driver: bridge
