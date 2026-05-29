@@ -3,6 +3,10 @@ from functools import cache
 
 from fastapi import Depends
 
+from redis.asyncio.client import Redis
+
+from infrastructure.services.stream import RedisStreamService, get_redis
+from domain.services.stream import BaseStreamService
 from application.usecases.defects.get_by_user_id import BaseDefectGetByUserIdUseCase, DefectGetByUserIdUseCase
 from application.usecases.defects.get_in_vieport import BaseDefectGetInViewPortUseCase, DefectGetInViewPortUseCase
 from domain.services.token import BaseTokenService
@@ -34,12 +38,19 @@ def token_service_factory() -> BaseTokenService:
 def get_road_snapping_service(uow: BaseUnitOfWork) -> BaseRoadSnappingService:
     return OSMRoadSnappingService(uow)
 
+def get_stream_service() -> BaseStreamService:
+    redis: Redis = get_redis()
+    if redis is None:
+        raise Exception("Redis is not initialized")
+    return RedisStreamService(redis)
+
 @add_factory_to_mapper(BaseDefectCreateUseCase)
 @cache
 def defect_create_usecase_factory(
-    uow: BaseUnitOfWork = Depends(uow_factory)
+    uow: BaseUnitOfWork = Depends(uow_factory),
+    stream_service: BaseStreamService = Depends(get_stream_service)
 ) -> BaseDefectCreateUseCase:
-    return DefectCreateUseCase(uow)
+    return DefectCreateUseCase(uow, stream_service)
 
 @add_factory_to_mapper(BaseDefectsGetUseCase)
 @cache

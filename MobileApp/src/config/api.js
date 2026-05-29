@@ -28,6 +28,7 @@ export function createApiInstance(baseURL) {
     const token = await storage.getItem('access_token');
     if (token) config.headers.Authorization = `Bearer ${token}`;
     
+    // Не устанавливаем Content-Type для FormData
     if (!(config.data instanceof FormData)) {
       config.headers['Content-Type'] = 'application/json';
     }
@@ -71,7 +72,7 @@ export function createApiInstance(baseURL) {
           const formData = new FormData();
           formData.append('refresh_token', refreshToken);
           
-          // Важно: для refresh используем rawApi, чтобы избежать цикла
+          // Для refresh используем полный URL через rawApi
           const { data } = await rawApi.post('/v1/users/me/refresh', formData, {
             headers: { 
               'Content-Type': 'multipart/form-data',

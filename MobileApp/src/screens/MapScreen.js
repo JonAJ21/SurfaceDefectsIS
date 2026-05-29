@@ -11,7 +11,10 @@ import {
   Dimensions,
   ActivityIndicator,
   Switch,
-  Modal
+  Modal,
+  ScrollView,
+  Linking,
+  Image 
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
@@ -22,65 +25,10 @@ import { WebViewMessageTypes, ReactToWebViewTypes } from '../assets/map/map-brid
 import * as Location from 'expo-location';
 import { useAuth } from '../context/AuthContext';
 import { formatDate } from '../utils/date';
+import { getPhotoUrl } from '../utils/urlHelper';
+import PhotoViewerModal from './PhotoViewerModal';
 
 const { width, height } = Dimensions.get('window');
-
-const DefectPopup = ({ visible, defect, onClose, onNavigate }) => {
-  if (!defect || !visible) return null;
-
-  const severityColor = SEVERITY_COLORS[defect.severity] || SEVERITY_COLORS.low;
-
-  return (
-    <View style={styles.popupContainer}>
-      <View style={styles.popupHeader}>
-        <View style={[styles.severityBadge, { backgroundColor: severityColor + '20' }]}>
-          <View style={[styles.severityDot, { backgroundColor: severityColor }]} />
-          <Text style={[styles.severityText, { color: severityColor }]}>
-            {SEVERITY_LABELS[defect.severity] || defect.severity}
-          </Text>
-        </View>
-        <TouchableOpacity onPress={onClose} style={styles.popupCloseBtn}>
-          <Ionicons name="close" size={22} color="#64748b" />
-        </TouchableOpacity>
-      </View>
-
-      <Text style={styles.popupTitle}>
-        {DEFECT_TYPE_LABELS[defect.defect_type] || defect.defect_type}
-      </Text>
-
-      {defect.description ? (
-        <Text style={styles.popupDescription} numberOfLines={3}>{defect.description}</Text>
-      ) : (
-        <Text style={styles.popupNoDescription}>Нет описания</Text>
-      )}
-
-      {defect.road_name && defect.road_name !== 'null' && (
-        <View style={styles.popupInfoRow}>
-          <Ionicons name="location-outline" size={16} color="#64748b" />
-          <Text style={styles.popupInfoText} numberOfLines={1}>{defect.road_name}</Text>
-        </View>
-      )}
-
-      <View style={styles.popupInfoRow}>
-        <Ionicons name="time-outline" size={16} color="#64748b" />
-        <Text style={styles.popupInfoText}>{formatDate(defect.created_at)}</Text>
-      </View>
-
-      <TouchableOpacity 
-        style={styles.popupNavigateBtn}
-        onPress={() => {
-          onClose();
-          if (defect.lat && defect.lon) {
-            onNavigate(defect.lat, defect.lon);
-          }
-        }}
-      >
-        <Ionicons name="navigate" size={18} color="#fff" />
-        <Text style={styles.popupNavigateText}>Показать на карте</Text>
-      </TouchableOpacity>
-    </View>
-  );
-};
 
 const Toast = ({ visible, message, type, onHide }) => {
   const opacity = useRef(new Animated.Value(0)).current;
@@ -776,7 +724,9 @@ export default function MapScreen({ navigation, route }) {
   const [selectedDefect, setSelectedDefect] = useState(null);
   const [popupVisible, setPopupVisible] = useState(false);
   const { user, isVerified } = useAuth();
-  
+  const [photoViewerVisible, setPhotoViewerVisible] = useState(false);
+  const [photoViewerPhotos, setPhotoViewerPhotos] = useState([]);
+  const [photoViewerIndex, setPhotoViewerIndex] = useState(0);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [severityFilter, setSeverityFilter] = useState({
     critical: true,
@@ -829,10 +779,14 @@ export default function MapScreen({ navigation, route }) {
     const initNotifications = async () => {
       await proximityService.init();
       proximityService.startMonitoring((notification) => {
+        // Получаем название типа дефекта из DEFECT_TYPE_LABELS
+        const defectName = DEFECT_TYPE_LABELS[notification.defect.defect_type] || notification.defect.defect_type || 'дефект';
+        
         const severityIcon = notification.defect.severity === 'critical' ? '⚠️' :
                             notification.defect.severity === 'high' ? '🔴' :
                             notification.defect.severity === 'medium' ? '🟡' : '🟢';
-        showToast(`${severityIcon} ${notification.defect.type}\n${Math.round(notification.distance)} м, ${notification.timeToDefect} сек`, 'warning');
+        
+        showToast(`${severityIcon} ${defectName}\n${Math.round(notification.distance)} м, ${notification.timeToDefect} сек`, 'warning');
       });
       
       proximityService.setEnabled(notificationsEnabled);
@@ -844,7 +798,7 @@ export default function MapScreen({ navigation, route }) {
     return () => {
       proximityService.stopMonitoring();
     };
-  }, []);
+  }, [notificationsEnabled, severityFilter, showToast]);
 
   useEffect(() => {
     const unsubscribe = defectsGrid.subscribe((data) => {
@@ -934,10 +888,11 @@ export default function MapScreen({ navigation, route }) {
       if (typeof data !== 'string') return;
       const msg = JSON.parse(data);
       if (!msg || !msg.type) return;
-      
-      if (msg.type === WebViewMessageTypes.MAP_READY) { 
-        setMapReady(true); 
-        startLocationTracking(); 
+
+      // MAP_READY - карта загружена
+      if (msg.type === WebViewMessageTypes.MAP_READY) {
+        setMapReady(true);
+        startLocationTracking();
         showToast('Карта загружена', 'success');
         
         if (pendingCenterRef.current) {
@@ -945,8 +900,10 @@ export default function MapScreen({ navigation, route }) {
           sendToMap('CENTER_MAP', { lat, lng, zoom });
           pendingCenterRef.current = null;
         }
+        return;
       }
-      
+
+      // MAP_CENTER - изменение центра карты
       if (msg.type === 'MAP_CENTER') {
         const { lat, lng, zoom } = msg.payload;
         setCurrentZoom(zoom);
@@ -955,70 +912,108 @@ export default function MapScreen({ navigation, route }) {
         loadTimeoutRef.current = setTimeout(() => {
           defectsGrid.smartLoad(lat, lng, zoom, currentBoundsRef.current);
         }, 300);
+        return;
       }
-      
+
+      // MAP_BOUNDS - границы карты
       if (msg.type === 'MAP_BOUNDS') {
         currentBoundsRef.current = msg.payload;
+        return;
       }
-      
+
+      // MAP_ZOOM_CHANGED - изменение зума
       if (msg.type === 'MAP_ZOOM_CHANGED') {
         const newZoom = msg.payload.zoom;
         if (Math.abs(newZoom - currentZoom) >= 1) {
           setCurrentZoom(newZoom);
         }
+        return;
       }
-      
+
+      // DEFECT_CLICK - клик по дефекту (точке или линии)
       if (msg.type === WebViewMessageTypes.DEFECT_CLICK) {
-        const fullDefect = defects.find(d => d.id === msg.payload.id);
-        if (fullDefect) {
-          setSelectedDefect(fullDefect);
-          setPopupVisible(true);
-        } else {
-          try {
-            const defectData = await getDefectById(msg.payload.id);
-            let coords = defectData.snapped_coordinates || defectData.original_coordinates;
-            let centerLat = null, centerLon = null;
-            
-            if (coords) {
-              if (Array.isArray(coords[0]) && coords[0].length === 2) {
-                centerLat = coords[0][1];
-                centerLon = coords[0][0];
-              } else if (coords.length === 2 && typeof coords[0] === 'number') {
-                centerLat = coords[1];
-                centerLon = coords[0];
-              }
+        console.log('🔍 Клик по дефекту, ID:', msg.payload.id);
+        showToast('Загрузка информации о дефекте...', 'info');
+        
+        try {
+          // Получаем полную информацию о дефекте
+          const fullDefect = await getDefectById(msg.payload.id);
+          
+          // Извлекаем координаты
+          let coords = fullDefect.snapped_coordinates || fullDefect.original_coordinates;
+          let centerLat = null, centerLon = null;
+          
+          if (coords && Array.isArray(coords) && coords.length > 0) {
+            if (Array.isArray(coords[0]) && coords[0].length === 2) {
+              centerLat = coords[0][1];
+              centerLon = coords[0][0];
+            } else if (coords.length === 2 && typeof coords[0] === 'number') {
+              centerLat = coords[1];
+              centerLon = coords[0];
+            } else if (coords.length === 1 && Array.isArray(coords[0]) && coords[0].length === 2) {
+              centerLat = coords[0][1];
+              centerLon = coords[0][0];
             }
-            
-            setSelectedDefect({ 
-              ...defectData, 
-              lat: centerLat, 
-              lon: centerLon,
-              color: SEVERITY_COLORS[defectData.severity] || SEVERITY_COLORS.low
-            });
-            setPopupVisible(true);
-          } catch (error) {
-            console.error('Failed to load defect details:', error);
           }
+          
+          // Формируем полный объект дефекта для попапа
+          const fullDefectData = {
+            id: fullDefect.id,
+            defect_type: fullDefect.defect_type,
+            severity: fullDefect.severity,
+            description: fullDefect.description || '',
+            status: fullDefect.status,
+            road_name: fullDefect.road_info?.road_name || fullDefect.road_name || null,
+            created_at: fullDefect.created_at,
+            created_by: fullDefect.created_by,
+            moderated_by: fullDefect.moderated_by,
+            moderated_at: fullDefect.moderated_at,
+            rejection_reason: fullDefect.rejection_reason,
+            photos: fullDefect.photos || [],
+            lat: centerLat,
+            lon: centerLon,
+            color: SEVERITY_COLORS[fullDefect.severity] || SEVERITY_COLORS.low,
+            geometry_type: fullDefect.geometry_type,
+            original_coordinates: fullDefect.original_coordinates,
+            snapped_coordinates: fullDefect.snapped_coordinates,
+            road_info: fullDefect.road_info,
+            length_meters: fullDefect.length_meters
+          };
+          
+          setSelectedDefect(fullDefectData);
+          setPopupVisible(true);
+          showToast('Информация загружена', 'success');
+          
+        } catch (error) {
+          console.error('❌ Ошибка загрузки дефекта:', error);
+          showToast('Не удалось загрузить информацию о дефекте', 'error');
         }
+        return;
       }
-      
+
+      // LOCATION_MODE_CHANGED - изменение режима отображения местоположения
       if (msg.type === 'LOCATION_MODE_CHANGED') {
         setLocationMode(msg.payload);
+        return;
       }
-      
+
+      // SNAP_POINT - привязка точки к дороге
       if (msg.type === 'SNAP_POINT') {
         try {
-          const result = await snapPoint({ 
-            longitude: msg.payload.longitude, 
-            latitude: msg.payload.latitude, 
-            max_distance_meters: 15 
+          const result = await snapPoint({
+            longitude: msg.payload.longitude,
+            latitude: msg.payload.latitude,
+            max_distance_meters: 15
           });
           sendToMap('SNAP_RESPONSE', { success: true, ...result });
         } catch (error) {
+          console.error('Snap error:', error);
           sendToMap('SNAP_RESPONSE', { success: false, error: true, message: error.message });
         }
+        return;
       }
-      
+
+      // DRAW_POINT_ADDED - добавлена точка при рисовании
       if (msg.type === 'DRAW_POINT_ADDED') {
         setDrawPoints(prev => [...prev, msg.payload.coordinates]);
         const pointCount = drawPoints.length + 1;
@@ -1027,12 +1022,16 @@ export default function MapScreen({ navigation, route }) {
         } else {
           showToast(`Добавлена точка ${pointCount}. Будет создан линейный дефект`, 'success');
         }
+        return;
       }
-      
+
+      // DRAW_POINT_FAILED - ошибка добавления точки
       if (msg.type === 'DRAW_POINT_FAILED') {
         showToast(msg.payload.error || 'Точка не добавлена', 'error');
+        return;
       }
-      
+
+      // DRAW_COMPLETE - завершение рисования
       if (msg.type === 'DRAW_COMPLETE') {
         setDrawMode(false);
         navigation.navigate('CreateDefect', {
@@ -1041,18 +1040,24 @@ export default function MapScreen({ navigation, route }) {
           userLocation: userLocation
         });
         sendToMap('DISABLE_DRAW_MODE', null);
+        return;
       }
-      
+
+      // DRAW_INCOMPLETE - недостаточно точек
       if (msg.type === 'DRAW_INCOMPLETE') {
         showToast(msg.payload.message || 'Добавьте хотя бы одну точку', 'error');
+        return;
       }
-      
+
+      // DRAW_MODE_CHANGED - изменение режима рисования
       if (msg.type === 'DRAW_MODE_CHANGED') {
         if (!msg.payload.enabled) {
           setDrawMode(false);
           setDrawPoints([]);
         }
+        return;
       }
+
     } catch (e) {
       console.error('Message handling error:', e);
     }
@@ -1146,6 +1151,108 @@ export default function MapScreen({ navigation, route }) {
     setPopupVisible(false);
     setSelectedDefect(null);
     sendToMap('CENTER_MAP', { lat, lng, zoom: 18 });
+  };
+
+  const openPhotoViewer = (photos, index) => {
+    setPhotoViewerPhotos(photos);
+    setPhotoViewerIndex(index);
+    setPhotoViewerVisible(true);
+  };
+
+  // DefectPopup component
+  const DefectPopupComponent = ({ visible, defect, onClose, onNavigate }) => {
+    if (!defect || !visible) return null;
+
+    const severityColor = SEVERITY_COLORS[defect.severity] || SEVERITY_COLORS.low;
+    const hasPhotos = defect.photos && defect.photos.length > 0;
+
+    return (
+      <View style={styles.popupContainer}>
+        <View style={styles.popupHeader}>
+          <View style={[styles.severityBadge, { backgroundColor: severityColor + '20' }]}>
+            <View style={[styles.severityDot, { backgroundColor: severityColor }]} />
+            <Text style={[styles.severityText, { color: severityColor }]}>
+              {SEVERITY_LABELS[defect.severity] || defect.severity}
+            </Text>
+          </View>
+          <TouchableOpacity onPress={onClose} style={styles.popupCloseBtn}>
+            <Ionicons name="close" size={22} color="#64748b" />
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.popupTitle}>
+          {DEFECT_TYPE_LABELS[defect.defect_type] || defect.defect_type}
+        </Text>
+
+        {defect.description ? (
+          <Text style={styles.popupDescription} numberOfLines={3}>{defect.description}</Text>
+        ) : (
+          <Text style={styles.popupNoDescription}>Нет описания</Text>
+        )}
+
+        {defect.road_name && defect.road_name !== 'null' && (
+          <View style={styles.popupInfoRow}>
+            <Ionicons name="location-outline" size={16} color="#64748b" />
+            <Text style={styles.popupInfoText} numberOfLines={1}>{defect.road_name}</Text>
+          </View>
+        )}
+
+        <View style={styles.popupInfoRow}>
+          <Ionicons name="time-outline" size={16} color="#64748b" />
+          <Text style={styles.popupInfoText}>{formatDate(defect.created_at)}</Text>
+        </View>
+
+        {/* ФОТОГРАФИИ */}
+        {hasPhotos ? (
+          <View style={styles.popupPhotosSection}>
+            <Text style={styles.popupPhotosTitle}>
+              📸 Фотографии ({defect.photos.length})
+            </Text>
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false}
+              style={styles.popupPhotosScroll}
+              contentContainerStyle={styles.popupPhotosContent}
+            >
+              {defect.photos.map((photo, index) => {
+                const photoUrl = getPhotoUrl(photo);
+                return (
+                  <TouchableOpacity 
+                    key={index}
+                    style={styles.popupPhotoItem}
+                    onPress={() => openPhotoViewer(defect.photos, index)}
+                  >
+                    <Image 
+                      source={{ uri: photoUrl }} 
+                      style={styles.popupPhoto}
+                      resizeMode="cover"
+                    />
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        ) : (
+          <View style={styles.popupNoPhotos}>
+            <Ionicons name="camera-outline" size={20} color="#94a3b8" />
+            <Text style={styles.popupNoPhotosText}>Нет фотографий</Text>
+          </View>
+        )}
+
+        <TouchableOpacity 
+          style={styles.popupNavigateBtn}
+          onPress={() => {
+            onClose();
+            if (defect.lat && defect.lon) {
+              onNavigate(defect.lat, defect.lon);
+            }
+          }}
+        >
+          <Ionicons name="navigate" size={18} color="#fff" />
+          <Text style={styles.popupNavigateText}>Показать на карте</Text>
+        </TouchableOpacity>
+      </View>
+    );
   };
 
   return (
@@ -1269,7 +1376,7 @@ export default function MapScreen({ navigation, route }) {
         </View>
       )}
 
-      <DefectPopup 
+      <DefectPopupComponent 
         visible={popupVisible}
         defect={selectedDefect}
         onClose={() => {
@@ -1277,6 +1384,13 @@ export default function MapScreen({ navigation, route }) {
           setSelectedDefect(null);
         }}
         onNavigate={navigateToDefect}
+      />
+
+      <PhotoViewerModal
+        visible={photoViewerVisible}
+        photos={photoViewerPhotos}
+        initialIndex={photoViewerIndex}
+        onClose={() => setPhotoViewerVisible(false)}
       />
 
       <Toast 
@@ -1359,7 +1473,7 @@ const styles = StyleSheet.create({
   
   profileButton: { 
     position: 'absolute', 
-    top: 16, 
+    top: 30, 
     right: 16, 
     width: 48, 
     height: 48, 
@@ -1378,7 +1492,7 @@ const styles = StyleSheet.create({
   },
   myDefectsButton: { 
     position: 'absolute', 
-    top: 16, 
+    top: 30, 
     left: 16, 
     width: 48, 
     height: 48, 
@@ -1439,7 +1553,7 @@ const styles = StyleSheet.create({
   locationButton: { 
     position: 'absolute', 
     bottom: 96, 
-    right: 16, 
+    right: 24, 
     width: 48, 
     height: 48, 
     borderRadius: 24, 
@@ -1457,11 +1571,11 @@ const styles = StyleSheet.create({
   
   notificationSettingsButton: { 
     position: 'absolute', 
-    bottom: 160, 
-    right: 16, 
-    width: 44, 
-    height: 44, 
-    borderRadius: 22, 
+    bottom: 36, 
+    right: 24, 
+    width: 48, 
+    height: 48, 
+    borderRadius: 24, 
     backgroundColor: '#fff', 
     justifyContent: 'center', 
     alignItems: 'center', 
@@ -1477,8 +1591,8 @@ const styles = StyleSheet.create({
   
   fab: { 
     position: 'absolute', 
-    bottom: 24, 
-    right: 24, 
+    bottom: 36, 
+    left: 24, 
     width: 56, 
     height: 56, 
     borderRadius: 28, 
@@ -1676,6 +1790,49 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     gap: 8,
     marginTop: 8,
+  },
+  popupPhotosSection: {
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  popupPhotosTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#475569',
+    marginBottom: 8,
+  },
+  popupPhotosScroll: {
+    flexDirection: 'row',
+  },
+  popupPhotosContent: {
+    paddingRight: 8,
+  },
+  popupPhotoItem: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    marginRight: 8,
+    overflow: 'hidden',
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  popupPhoto: {
+    width: '100%',
+    height: '100%',
+  },
+  popupNoPhotos: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    marginTop: 8,
+    marginBottom: 8,
+    gap: 6,
+  },
+  popupNoPhotosText: {
+    fontSize: 12,
+    color: '#94a3b8',
   },
   popupNavigateText: {
     color: '#fff',

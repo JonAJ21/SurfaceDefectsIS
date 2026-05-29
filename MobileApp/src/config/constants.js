@@ -36,19 +36,19 @@ const getLocalStaticUrl = () => {
   return `http://${host}:9000`;
 };
 
-// Экспортируем URL сервисов
+// Экспортируем URL сервисов - теперь через nginx на порту 80
 const API_HOST = getLocalApiHost();
-const AUTH_PORT = process.env.EXPO_PUBLIC_AUTH_SERVICE_PORT || '8001';
-const DEFECTS_PORT = process.env.EXPO_PUBLIC_DEFECTS_SERVICE_PORT || '8002';
+const NGINX_PORT = process.env.EXPO_PUBLIC_NGINX_PORT || '80';
 
-export const AUTH_SERVICE_URL = `http://${API_HOST}:${AUTH_PORT}`;
-export const DEFECTS_SERVICE_URL = `http://${API_HOST}:${DEFECTS_PORT}`;
+export const AUTH_SERVICE_URL = `http://${API_HOST}:${NGINX_PORT}/auth-service`;
+export const DEFECTS_SERVICE_URL = `http://${API_HOST}:${NGINX_PORT}/defects-service`;
 export const LOCAL_STATIC_URL = getLocalStaticUrl();
 
 if (IS_DEV) {
   console.log('🔧 DEV Config:', { 
     platform: Platform.OS, 
-    host: API_HOST, 
+    host: API_HOST,
+    nginxPort: NGINX_PORT,
     authUrl: AUTH_SERVICE_URL,
     defectsUrl: DEFECTS_SERVICE_URL,
     staticUrl: LOCAL_STATIC_URL

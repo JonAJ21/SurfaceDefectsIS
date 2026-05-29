@@ -191,7 +191,9 @@ class ProximityService {
       low: '🟢 Низкая опасность',
     };
     
-    const defectName = DEFECT_TYPE_LABELS[defect.defect_type] || defect.defect_type;
+    // Исправлено: используем DEFECT_TYPE_LABELS для получения названия
+    // Поскольку DEFECT_TYPE_LABELS может не быть в этом файле, импортируем его
+    const defectName = DEFECT_TYPE_LABELS[defect.defect_type] || defect.defect_type || 'Дефект';
     const title = severityIcons[defect.severity] || 'Дефект';
     const body = `${defectName}\n${Math.round(distance)} м, ${timeToDefect} сек\n${defect.road_name || ''}`;
     
@@ -263,6 +265,12 @@ class ProximityService {
     for (const defect of nearbyDefects) {
       if (this.shouldNotify(defect, defect.distance, this.currentSpeed)) {
         const timeToDefect = this.getTimeToDefect(defect.distance, this.currentSpeed);
+        // Убедитесь, что defect содержит defect_type и severity
+        console.log('Отправка уведомления для дефекта:', {
+          type: defect.defect_type,
+          severity: defect.severity,
+          distance: defect.distance
+        });
         const notification = await this.showNotification(defect, defect.distance, timeToDefect);
         notifications.push(notification);
       }

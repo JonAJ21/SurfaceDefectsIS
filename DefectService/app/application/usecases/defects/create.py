@@ -1,8 +1,9 @@
 import json
-import redis.asyncio as redis
+from redis import Redis
 from datetime import datetime, timedelta
 from typing import List, Tuple
 
+from domain.services.stream import BaseStreamService
 from domain.values.defect_types import GeometryType, RoadInfo
 from domain.values.location import Coordinate, Distance
 from domain.entities.defect import RoadDefect
@@ -19,36 +20,12 @@ class BaseDefectCreateUseCase(BaseUseCase[DefectCreateRequestDTO, DefectCreateRe
 class DefectCreateUseCase(BaseDefectCreateUseCase):
     def __init__(
         self,
-        uow: BaseUnitOfWork
+        uow: BaseUnitOfWork,
+        stream_service: BaseStreamService
     ):
         self.uow = uow
-        self._redis_client = None
-    
-    async def _get_redis_client(self) -> redis.Redis:
-        if self._redis_client is None:
-            self._redis_client = await redis.from_url(
-                f"redis://{settings.redis_host}:{settings.redis_port}",
-                decode_responses=True
-            )
-        return self._redis_client
-    
-    async def _publish_to_detection_stream(self, defect_id: str, photo_path: str) -> None:
-        """Публикация сообщения в Redis Streams для сервиса детекции"""
-        try:
-            redis_client = await self._get_redis_client()
-            stream_name = "defect:detection"
-            
-            message_id = await redis_client.xadd(
-                stream_name,
-                {
-                    "defect_id": defect_id,
-                    "photo_path": photo_path,
-                }
-            )
-            print(f"Published defect {defect_id} to stream {stream_name}, message_id: {message_id}")
-        except Exception as e:
-            print(f"Failed to publish to stream: {e}")
-    
+        self.stream_service = stream_service
+
     async def _check_duplicate(
         self,
         coordinates: List[List[float]],
@@ -150,7 +127,7 @@ class DefectCreateUseCase(BaseDefectCreateUseCase):
         avg_distance = total_distance / len(points)
         
         return snapped_points, road_info, avg_distance
-    
+
     async def execute(self, request: DefectCreateRequestDTO) -> DefectCreateResponseDTO:
         async with self.uow as uow:
             is_duplicate = await self._check_duplicate(
@@ -164,7 +141,7 @@ class DefectCreateUseCase(BaseDefectCreateUseCase):
                     "Similar defect already exists nearby. "
                     "Please check existing defects before creating a new one."
                 )
-            
+
             defect = RoadDefect(
                 defect_type=request.defect_type,
                 severity=request.severity,
@@ -208,10 +185,13 @@ class DefectCreateUseCase(BaseDefectCreateUseCase):
                 length_meters = defect.length
             
             saved_defect = await uow.defects.save(defect)
-            await uow.commit()
             
-            for photo_url in photo_urls:
-                await self._publish_to_detection_stream(str(saved_defect.id), photo_url)
+            await self.stream_service.publish_defect(
+                defect_id=str(saved_defect.id),
+                media_paths=photo_urls
+            )
+            
+            await uow.commit()
             
             road_info_response = None
             if saved_defect.road_info:
@@ -237,3 +217,4 @@ class DefectCreateUseCase(BaseDefectCreateUseCase):
                 created_at=saved_defect.created_at,
                 length_meters=length_meters
             )
+            

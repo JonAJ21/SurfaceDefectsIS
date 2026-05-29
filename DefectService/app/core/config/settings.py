@@ -87,13 +87,13 @@ class Settings(BaseSettings):
         alias="redis_db",
     )
     
-    redis_host: str = Field(
+    defects_redis_host: str = Field(
         "localhost",
         env="DEFECTS_REDIS_HOST",
         alias="defects_redis_host",
     )
     
-    redis_port: int = Field(
+    defects_redis_port: int = Field(
         6379,
         env="DEFECTS_REDIS_PORT",
         alias="defects_redis_port",

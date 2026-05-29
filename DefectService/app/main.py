@@ -2,11 +2,12 @@ from contextlib import asynccontextmanager
 from typing import Any, Callable
 
 from prometheus_fastapi_instrumentator import Instrumentator
-# from redis.asyncio.client import Redis
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from redis.asyncio.client import Redis
 
-# from infrastructure.database import redis
+from core.config.settings import settings
+from infrastructure.services import stream
 # from core.config.settings import settings
 from application.dependencies.factories import *
 from application.dependencies.registrator import dependencies_container
@@ -20,17 +21,17 @@ def setup_dependencies(app: FastAPI, mapper: dict[Any, Callable] | None = None) 
     for interface, dependency in mapper.items():
         app.dependency_overrides[interface] = dependency
 
-# @asynccontextmanager
-# async def lifespan(_: FastAPI):
-#     redis.redis = Redis(
-#         host=settings.redis_host,
-#         port=settings.redis_port,
-#         password=settings.redis_password,
-#         db=settings.redis_db,
-#         decode_responses=True
-#     )
-#     yield
-#     await redis.redis.aclose()
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    stream.redis = Redis(
+        host="defects-redis",
+        port=6379,
+        password=settings.redis_password,
+        db=settings.redis_db,
+        decode_responses=True
+    )
+    yield
+    await stream.redis.aclose()
     
 
 def create_app() -> FastAPI:
@@ -39,7 +40,7 @@ def create_app() -> FastAPI:
         docs_url="/api/docs",
         openapi_url="/openapi.json",
         description="Defects Service",
-        # lifespan=lifespan
+        lifespan=lifespan
     )
     
     setup_dependencies(app)

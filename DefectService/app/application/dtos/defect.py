@@ -19,6 +19,7 @@ class DefectCreateRequestDTO(BaseModel):
     geometry_type: GeometryType
     coordinates: List[List[float]]
     description: Optional[str] = None
+    max_distance_meters: int
     created_by: str
     photos: List[PhotoUploadDTO]
 
