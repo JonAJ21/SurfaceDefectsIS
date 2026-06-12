@@ -1,0 +1,15 @@
+[project]
+name = "defectdetectionservice"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.28.1",
+    "numpy>=2.2.6",
+    "opencv-python>=4.13.0.92",
+    "pydantic>=2.13.3",
+    "pydantic-settings>=2.14.0",
+    "redis>=7.4.0",
+    "ultralytics>=8.4.46",
+]
