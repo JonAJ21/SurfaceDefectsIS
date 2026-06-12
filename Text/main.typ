@@ -56,7 +56,8 @@
 #include "sections/3-implementation.typ"
 #include "sections/4-conclusion.typ"
 
-#bibliography("ref.bib")
+// #bibliography("ref.bib")
+#bibliography("ref.bib", style: "gost-r-7-0-5-2008-rew.csl", title: "Список использованных источников")
 
 #show: appendixes
 #include "appendices/appendix-a.typ"
